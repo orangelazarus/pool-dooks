@@ -68,6 +68,8 @@ interface GamePlugin {
 
 Register in `lib/games/registry.ts` — the game appears on the home page automatically.
 
+See [docs/creating-a-game.md](docs/creating-a-game.md) for a full step-by-step guide with a worked example.
+
 ---
 
 ## Linked Blanks
