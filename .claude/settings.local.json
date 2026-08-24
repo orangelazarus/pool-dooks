@@ -6,7 +6,17 @@
       "Bash(python3 -m json.tool)",
       "Read(//home/mhuch/.config/**)",
       "Read(//home/mhuch/**)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"Add game creation guide:*)",
+      "Bash(git push:*)",
+      "Bash(node:*)",
+      "Bash(grep -r \"from.*@/lib/editor\\\\|from.*@/lib/ai\\\\|from.*@/components/editor\\\\|from.*@/components/pool-dook\\\\|from.*@/components/games\\\\|from.*@/components/session/GameBoard\\\\|from.*@/components/session/RevealDisplay\\\\|from.*@/lib/utils/token-ordering\\\\|from.*@/lib/games/pool-dooks\\\\|from.*@/lib/games/guess-the-number\\\\|from.*@/lib/db.*poolDooks\\\\|from.*@/lib/db.*numberGames\\\\|from.*@/lib/db.*THEMES\\\\|from.*@/lib/db.*PoolDookToken\" --include=*.ts --include=*.tsx /home/mhuch/Development/madlibs/app /home/mhuch/Development/madlibs/lib /home/mhuch/Development/madlibs/components /home/mhuch/Development/madlibs/hooks)",
+      "Bash(ls /home/mhuch/Development/madlibs/app/\\\\\\(app\\\\\\)/games/)",
+      "Bash(ls /home/mhuch/Development/madlibs/app/\\\\\\(app\\\\\\)/games/pool-dooks/)",
+      "Bash(ls /home/mhuch/Development/madlibs/app/\\\\\\(app\\\\\\)/games/guess-the-number/)",
+      "Bash(ls -la /home/mhuch/Development/madlibs/app/\\\\\\(app\\\\\\)/games/pool-dooks/)",
+      "Bash(ls -la /home/mhuch/Development/madlibs/app/\\\\\\(app\\\\\\)/games/guess-the-number/)"
     ]
   }
 }

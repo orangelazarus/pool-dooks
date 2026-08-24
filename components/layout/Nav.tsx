@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { BookOpen, Plus, LogOut, User } from "lucide-react";
+import { LogOut, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface NavProps {
@@ -40,14 +40,6 @@ export function Nav({ user, profile }: NavProps) {
         <nav className="flex items-center gap-2">
           {user ? (
             <>
-              <Link href="/create" className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-1.5")}>
-                <Plus className="h-4 w-4" />
-                <span className="hidden sm:inline">Create</span>
-              </Link>
-              <Link href="/library" className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-1.5")}>
-                <BookOpen className="h-4 w-4" />
-                <span className="hidden sm:inline">Library</span>
-              </Link>
               <DropdownMenu>
                 <DropdownMenuTrigger className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <Avatar className="h-8 w-8">

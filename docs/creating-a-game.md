@@ -6,18 +6,27 @@ The platform handles sessions, lobbies, turn cycling, real-time sync, push notif
 
 ---
 
+## How isolation works
+
+Each game lives entirely inside `games/<game-name>/`. Deleting that directory removes the game from the platform — zero edits to any base file required.
+
+When you run `npm run games:sync` (or `npm run dev` / `npm run build`, which run it automatically), a script scans `games/*/plugin.ts` and generates `lib/games/registry.ts`. The home page, session creation, lobby, and routing all derive from the registry.
+
+---
+
 ## Overview of what you'll create
+
+Everything lives inside `games/hot-take/`:
 
 | File | Purpose |
 |---|---|
-| `lib/db/schema.ts` | DB table for your game's content |
-| SQL migration | Run in Supabase to create the table |
-| `app/api/hot-takes/route.ts` | API to create/list content |
-| `lib/games/hot-take/plugin.ts` | The plugin — all server-side game logic |
-| `components/games/hot-take/HotTakeBoard.tsx` | What players see during gameplay |
-| `components/games/hot-take/HotTakeReveal.tsx` | The end-of-game reveal screen |
-| `app/(app)/games/hot-take/page.tsx` | Browse/create page for this game |
-| `lib/games/registry.ts` | Register the plugin (one line) |
+| `games/hot-take/schema.ts` | Drizzle table for game content |
+| `games/hot-take/plugin.ts` | All server-side logic + content API (`handleRequest`) |
+| `games/hot-take/components/HotTakeBoard.tsx` | What players see during gameplay |
+| `games/hot-take/components/HotTakeReveal.tsx` | End-of-game reveal screen |
+| `games/hot-take/pages/BrowsePage.tsx` | Browse/create page at `/games/hot_take` |
+
+After creating the plugin file, run `npm run games:sync` once. That's it.
 
 ---
 
@@ -29,44 +38,37 @@ Every game shares the same turn engine:
 - **`currentTokenIndex`** — which turn we're on
 - **`currentPlayerId`** — whose turn it is
 
-After each answer, the engine advances to the next token and cycles to the next player. When `currentTokenIndex >= tokenOrder.length`, the game is complete.
+After each answer the engine advances to the next token and cycles to the next player. When `currentTokenIndex >= tokenOrder.length`, the game is complete.
 
-For Hot Take, each player votes once on the same statement, so:
+For Hot Take, each player votes once on the same statement:
 
 ```
 tokenOrder = ["vote_<player1id>", "vote_<player2id>", "vote_<player3id>"]
 ```
 
-One entry per player. Each player submits `{ tokenId: "vote_<theirId>", value: "agree" | "disagree" }`. After all votes are in, the reveal fires automatically.
-
-For a trivia game you might do one entry per question per player, or one entry per question with all players answering simultaneously (same tokenId for everyone — answered once, game advances). Think through what one "turn" means in your game before writing code.
+Each player submits `{ tokenId: "vote_<theirId>", value: "agree" | "disagree" }`. After all votes are in, the reveal fires automatically.
 
 ---
 
-## 2. Add a DB table
+## 2. Create the DB schema
 
-Open `lib/db/schema.ts` and add your table at the bottom (before the TypeScript type exports):
+`games/hot-take/schema.ts`:
 
 ```ts
+import { pgTable, uuid, text, timestamp } from "drizzle-orm/pg-core";
+import { profiles } from "@/lib/db/schema";
+
 export const hotTakes = pgTable("hot_takes", {
   id: uuid("id").primaryKey().defaultRandom(),
   authorId: uuid("author_id").references(() => profiles.id, { onDelete: "set null" }),
   statement: text("statement").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
-```
 
-Also export the inferred type:
-
-```ts
 export type HotTake = typeof hotTakes.$inferSelect;
 ```
 
-Add it to `lib/db/index.ts` exports:
-
-```ts
-export { hotTakes } from "./schema";
-```
+`drizzle.config.ts` already includes `games/*/schema.ts` in its schema glob, so Drizzle picks this up automatically.
 
 ### Run the migration
 
@@ -83,61 +85,27 @@ CREATE TABLE hot_takes (
 
 ---
 
-## 3. Create the content API
+## 3. Write the plugin
 
-`app/api/hot-takes/route.ts`:
+`games/hot-take/plugin.ts` — this is the heart of the game. It implements all server-side logic and also handles its own content API via `handleRequest`.
 
 ```ts
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { db, hotTakes } from "@/lib/db";
-import { eq, desc } from "drizzle-orm";
-
-export async function GET() {
-  const rows = await db
-    .select({ id: hotTakes.id, statement: hotTakes.statement, createdAt: hotTakes.createdAt })
-    .from(hotTakes)
-    .orderBy(desc(hotTakes.createdAt))
-    .limit(20);
-  return NextResponse.json(rows);
-}
-
-export async function POST(req: NextRequest) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const { statement } = await req.json();
-  if (!statement?.trim()) return NextResponse.json({ error: "Statement required" }, { status: 400 });
-
-  const [row] = await db
-    .insert(hotTakes)
-    .values({ authorId: user.id, statement: statement.trim() })
-    .returning();
-
-  return NextResponse.json({ id: row.id, statement: row.statement }, { status: 201 });
-}
-```
-
----
-
-## 4. Write the plugin
-
-`lib/games/hot-take/plugin.ts`:
-
-```ts
 import type { GamePlugin, SessionPlayerInfo, AnswerContext } from "@/lib/games/types";
 import type { Session, Answer } from "@/lib/db/schema";
-import { db, hotTakes } from "@/lib/db";
-import { eq } from "drizzle-orm";
-import { HotTakeBoard } from "@/components/games/hot-take/HotTakeBoard";
-import { HotTakeReveal } from "@/components/games/hot-take/HotTakeReveal";
+import { db } from "@/lib/db";
+import { eq, desc } from "drizzle-orm";
+import { createClient } from "@/lib/supabase/server";
+import { hotTakes } from "./schema";
+import { HotTakeBoard } from "./components/HotTakeBoard";
+import { HotTakeReveal } from "./components/HotTakeReveal";
+import BrowsePage from "./pages/BrowsePage";
 
-export const hotTakePlugin: GamePlugin = {
+export const plugin: GamePlugin = {
   gameType: "hot_take",
   displayName: "Hot Take",
   description: "Vote agree or disagree on a spicy statement — see where everyone stands",
-  browsePath: "/games/hot-take",
+  browsePath: "/games/hot_take",
   minPlayers: 2,
   maxPlayers: 16,
   supportsRandomize: false,
@@ -160,7 +128,6 @@ export const hotTakePlugin: GamePlugin = {
   },
 
   async start(session, players) {
-    // One vote token per player, in join order
     const sorted = [...players].sort((a, b) => a.joinOrder - b.joinOrder);
     const tokenOrder = sorted.map((p) => `vote_${p.playerId}`);
     return { tokenOrder, firstPlayerId: sorted[0]?.playerId };
@@ -200,19 +167,49 @@ export const hotTakePlugin: GamePlugin = {
       vote: a.value as "agree" | "disagree",
     }));
 
-    const agreeCount = votes.filter((v) => v.vote === "agree").length;
-    const disagreeCount = votes.filter((v) => v.vote === "disagree").length;
-
     return {
       statement: row?.statement ?? "",
       votes,
-      agreeCount,
-      disagreeCount,
+      agreeCount: votes.filter((v) => v.vote === "agree").length,
+      disagreeCount: votes.filter((v) => v.vote === "disagree").length,
     };
+  },
+
+  // Content API — routes /api/games/hot_take/... land here
+  async handleRequest(req, path) {
+    const [seg0] = path;
+
+    if (req.method === "GET" && !seg0) {
+      const rows = await db
+        .select({ id: hotTakes.id, statement: hotTakes.statement, createdAt: hotTakes.createdAt })
+        .from(hotTakes)
+        .orderBy(desc(hotTakes.createdAt))
+        .limit(20);
+      return NextResponse.json(rows);
+    }
+
+    if (req.method === "POST" && !seg0) {
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+      const { statement } = await req.json();
+      if (!statement?.trim()) return NextResponse.json({ error: "Statement required" }, { status: 400 });
+
+      const [row] = await db
+        .insert(hotTakes)
+        .values({ authorId: user.id, statement: statement.trim() })
+        .returning();
+
+      return NextResponse.json({ id: row.id, statement: row.statement }, { status: 201 });
+    }
+
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   },
 
   PlayComponent: HotTakeBoard,
   RevealComponent: HotTakeReveal,
+  BrowsePage,
 };
 ```
 
@@ -222,25 +219,28 @@ export const hotTakePlugin: GamePlugin = {
 Returns `{ title }` for a piece of game content. Used in the session creation UI and lobby. Throw if not found.
 
 **`getLobbyMeta(session)`**
-Returns `{ subtitle }` shown under the game name in the lobby. Optional — omit the key from the object to show nothing.
+Returns `{ subtitle }` shown under the game name in the lobby. Optional method.
 
 **`start(session, players, randomize)`**
-Called when the host presses Start. Build and return `tokenOrder` — the ordered list of turn IDs for the entire game. Return `firstPlayerId` to set who goes first (defaults to host if omitted).
+Called when the host presses Start. Build and return `tokenOrder`. Return `firstPlayerId` to set who goes first.
 
 **`getAnswerHints(ctx)`**
-Called after each answer. Returns `{ nextTokenLabel }` used in the "Your turn!" push notification body. Return `{}` to use the default "word".
+Called after each answer. Returns `{ nextTokenLabel }` for push notifications.
 
 **`buildPlayProps(session, players)`**
-Called server-side when rendering the play page. Return whatever props your `PlayComponent` needs beyond the common ones (`shareCode`, `currentUserId`, `hostId`, `players`). Always include `initialCurrentTokenId`, `initialCurrentPlayerId`, and `initialTokenIndex` so the board can initialize correctly.
+Called server-side to render the play page. Always include `initialCurrentTokenId`, `initialCurrentPlayerId`, and `initialTokenIndex`.
 
 **`buildResult(session, answers)`**
-Called server-side for the reveal page. The `answers` array rows include a joined `username` field. Return whatever props your `RevealComponent` needs.
+Called server-side for the reveal page. `answers` rows include a joined `username` field.
+
+**`handleRequest(req, path)`**
+Handles all HTTP requests routed to `/api/games/hot_take/[...path]`. `path` is the segments after the game type (empty array for the root).
 
 ---
 
-## 5. Write the Play component
+## 4. Write the Play component
 
-`components/games/hot-take/HotTakeBoard.tsx`:
+`games/hot-take/components/HotTakeBoard.tsx`:
 
 ```tsx
 "use client";
@@ -316,7 +316,6 @@ export function HotTakeBoard({
   return (
     <div className="max-w-md mx-auto px-4 py-12 space-y-8">
       <p className="text-xl font-semibold text-center leading-snug">{statement}</p>
-
       <p className="text-sm text-center text-muted-foreground">
         {votedCount} of {tokenOrder.length} voted
       </p>
@@ -345,22 +344,22 @@ export function HotTakeBoard({
 ### Key patterns
 
 **`useGameState(players, initialOverride)`**
-Initializes client-side state from server-rendered props. Pass `initialCurrentTokenId`, `initialCurrentPlayerId`, and `initialTokenIndex` so the board is correct on first render without waiting for a Realtime event.
+Initializes client-side state from server-rendered props. Always pass the three `initial*` props.
 
 **`useSession(shareCode, onEvent)`**
-Subscribes to Supabase Realtime. Pass every event through `handleEvent` first, then handle navigation side effects. Always redirect to `/sessions/${shareCode}/reveal` on `session:completed` or `session:revealed`.
+Subscribes to Supabase Realtime. Pass every event through `handleEvent` first, then handle navigation. Always redirect on `session:completed` or `session:revealed`.
 
 **`state.answeredTokenIds`**
-A `Set<string>` of token IDs that have been answered this session. Use `.has(id)` and `.size`.
+A `Set<string>` of answered token IDs. Use `.has(id)` and `.size`.
 
 **Submit shape**
-Always POST `{ tokenId: state.currentTokenId, value: string }` to `/api/sessions/${shareCode}/answer`. The `tokenId` must match what the server expects — use `state.currentTokenId`, not a hardcoded value.
+Always POST `{ tokenId: state.currentTokenId, value: string }` to `/api/sessions/${shareCode}/answer`.
 
 ---
 
-## 6. Write the Reveal component
+## 5. Write the Reveal component
 
-`components/games/hot-take/HotTakeReveal.tsx`:
+`games/hot-take/components/HotTakeReveal.tsx`:
 
 ```tsx
 interface HotTakeRevealProps {
@@ -404,13 +403,11 @@ export function HotTakeReveal({ statement, votes, agreeCount, disagreeCount }: H
 }
 ```
 
-The `RevealComponent` is a plain server-renderable component. It receives exactly what `buildResult` returns (plus nothing extra). No hooks, no data fetching — the server page handles all of that.
-
 ---
 
-## 7. Create the browse page
+## 6. Create the browse page
 
-`app/(app)/games/hot-take/page.tsx`:
+`games/hot-take/pages/BrowsePage.tsx`:
 
 ```tsx
 "use client";
@@ -421,21 +418,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 
-export default function HotTakePage() {
+export default function BrowsePage() {
   const router = useRouter();
   const [statement, setStatement] = useState("");
   const [recent, setRecent] = useState<Array<{ id: string; statement: string }>>([]);
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    fetch("/api/hot-takes").then((r) => r.json()).then(setRecent).catch(() => {});
+    fetch("/api/games/hot_take").then((r) => r.json()).then(setRecent).catch(() => {});
   }, []);
 
   const handleCreate = async () => {
     if (!statement.trim()) return;
     setCreating(true);
     try {
-      const res = await fetch("/api/hot-takes", {
+      const res = await fetch("/api/games/hot_take", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ statement }),
@@ -452,7 +449,6 @@ export default function HotTakePage() {
   return (
     <div className="max-w-lg mx-auto px-4 py-8 space-y-6">
       <h1 className="text-2xl font-bold">Hot Take</h1>
-
       <Card>
         <CardHeader><CardTitle className="text-base">Write a Hot Take</CardTitle></CardHeader>
         <CardContent className="space-y-3">
@@ -488,52 +484,50 @@ export default function HotTakePage() {
 }
 ```
 
+> **API convention**: Call your game's own APIs at `/api/games/<gameType>/...` — this routes to your `handleRequest` method.
+
 ---
 
-## 8. Register the plugin
+## 7. Sync the registry
 
-Open `lib/games/registry.ts` and add one line:
-
-```ts
-import { hotTakePlugin } from "./hot-take/plugin";
-
-const registry = new Map<string, GamePlugin>([
-  ["pool_dooks", poolDooksPlugin],
-  ["guess_the_number", guessTheNumberPlugin],
-  ["hot_take", hotTakePlugin],           // ← add this
-]);
+```bash
+npm run games:sync
 ```
 
-That's it. The home page, session creation flow, lobby, play page, and reveal page all pick up the new game automatically.
+This scans `games/*/plugin.ts` (looking for `export const plugin`) and regenerates `lib/games/registry.ts`. The game appears on the home page automatically. `npm run dev` and `npm run build` run this automatically via `predev`/`prebuild`.
 
 ---
 
 ## Checklist
 
-- [ ] DB table added to `lib/db/schema.ts` and `lib/db/index.ts`
+- [ ] `games/hot-take/schema.ts` — Drizzle table
 - [ ] SQL `CREATE TABLE` run in Supabase SQL Editor
-- [ ] Content API at `app/api/<game>/route.ts`
-- [ ] Plugin at `lib/games/<game>/plugin.ts` implementing all required methods
-- [ ] `PlayComponent` at `components/games/<game>/`
-- [ ] `RevealComponent` at `components/games/<game>/`
-- [ ] Browse page at `app/(app)/games/<game>/page.tsx`
-- [ ] Plugin registered in `lib/games/registry.ts`
+- [ ] `games/hot-take/plugin.ts` — implements all required `GamePlugin` methods + `handleRequest` + `BrowsePage`
+- [ ] `games/hot-take/components/HotTakeBoard.tsx`
+- [ ] `games/hot-take/components/HotTakeReveal.tsx`
+- [ ] `games/hot-take/pages/BrowsePage.tsx`
+- [ ] `npm run games:sync` (or just `npm run dev`)
+
+To remove a game: delete `games/hot-take/` and run `npm run games:sync`.
 
 ---
 
 ## Common mistakes
 
 **`buildPlayProps` missing initial state**
-If you don't return `initialCurrentTokenId`, `initialCurrentPlayerId`, and `initialTokenIndex`, the board won't know whose turn it is on first render. It will look blank until the next Realtime event fires.
+If you don't return `initialCurrentTokenId`, `initialCurrentPlayerId`, and `initialTokenIndex`, the board will be blank until the next Realtime event fires.
 
 **Wrong `tokenId` in submit**
-Always send `tokenId: state.currentTokenId` — not a token ID you constructed yourself. The server validates that the submitted token matches the current index.
+Always send `tokenId: state.currentTokenId` — not a token ID you constructed yourself.
 
 **Answers table unique constraint**
-There's a unique constraint on `(sessionId, tokenId)`. If two players have the same `tokenId`, only the first answer is stored. Design your `tokenOrder` so token IDs are unique per turn (e.g. prefix with player ID as shown above).
+There's a unique constraint on `(sessionId, tokenId)`. Design your `tokenOrder` so IDs are unique per turn (e.g. prefix with player ID).
 
 **`buildResult` gets answers without usernames by default**
-The reveal route joins `profiles` for you — each `Answer` row has a `username` field available as `(answer as Answer & { username?: string | null }).username`.
+The reveal route joins `profiles` for you — each `Answer` row has `username` available as `(answer as Answer & { username?: string | null }).username`.
 
 **Forgot to handle `session:revealed`**
-Both `session:completed` and `session:revealed` are broadcast when the game ends. Handle both in your `useSession` callback or players who are mid-page-load may miss the redirect.
+Both `session:completed` and `session:revealed` are broadcast. Handle both or players mid-load may miss the redirect.
+
+**`browsePath` must match `gameType` with underscores**
+Use `/games/hot_take` (underscore), not `/games/hot-take` (hyphen) — the dynamic route matches `gameType` exactly.

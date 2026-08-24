@@ -18,60 +18,20 @@ export const profiles = pgTable("profiles", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
-// Mad lib themes
-export const THEMES = [
-  "everyday_life",
-  "entertainment",
-  "sports",
-  "sci_fi",
-  "fantasy",
-  "food",
-  "travel",
-  "custom",
-] as const;
-
-export type Theme = (typeof THEMES)[number];
-
-export const poolDooks = pgTable(
-  "pool_dooks",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    authorId: uuid("author_id").references(() => profiles.id, {
-      onDelete: "set null",
-    }),
-    title: text("title").notNull(),
-    theme: text("theme").notNull(),
-    bodyJson: jsonb("body_json").notNull(), // Tiptap ProseMirror doc
-    bodyText: text("body_text").notNull(), // plain text with {{token_id}} markers
-    tokens: jsonb("tokens").notNull(), // [{id, label, type, position, occurrence}]
-    isPublic: boolean("is_public").default(true),
-    aiGenerated: boolean("ai_generated").default(false),
-    extraWeird: boolean("extra_weird").default(false),
-    importSource: text("import_source"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-  },
-  (t) => [
-    index("idx_pool_dooks_theme").on(t.theme),
-    index("idx_pool_dooks_author").on(t.authorId),
-  ]
-);
-
 export const sessions = pgTable(
   "sessions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     shareCode: text("share_code").notNull().unique(),
     gameType: text("game_type").notNull().default("pool_dooks"),
-    gameContentId: uuid("game_content_id"), // game-type-specific content reference (no FK)
-    poolDookId: uuid("pool_dook_id") // legacy: kept for backward compat with old sessions
-      .references(() => poolDooks.id, { onDelete: "restrict" }),
+    gameContentId: uuid("game_content_id"),
+    poolDookId: uuid("pool_dook_id"), // legacy: no FK — pool_dooks table is game-owned
     hostId: uuid("host_id")
       .notNull()
       .references(() => profiles.id),
     status: text("status").notNull().default("lobby"), // lobby | in_progress | completed
     randomizeOrder: boolean("randomize_order").default(false),
-    tokenOrder: jsonb("token_order"), // resolved array of turn item IDs
+    tokenOrder: jsonb("token_order"),
     currentTokenIndex: integer("current_token_index").default(0),
     currentPlayerId: uuid("current_player_id").references(() => profiles.id),
     startedAt: timestamp("started_at", { withTimezone: true }),
@@ -134,29 +94,9 @@ export const pushSubscriptions = pgTable(
   (t) => [uniqueIndex("unique_user_endpoint").on(t.userId, t.endpoint)]
 );
 
-export const numberGames = pgTable("number_games", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  authorId: uuid("author_id").references(() => profiles.id, { onDelete: "set null" }),
-  title: text("title").notNull(),
-  minNumber: integer("min_number").notNull().default(1),
-  maxNumber: integer("max_number").notNull().default(100),
-  secretNumber: integer("secret_number").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
-
 // TypeScript types derived from schema
 export type Profile = typeof profiles.$inferSelect;
-export type PoolDook = typeof poolDooks.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type SessionPlayer = typeof sessionPlayers.$inferSelect;
 export type Answer = typeof answers.$inferSelect;
 export type PushSubscription = typeof pushSubscriptions.$inferSelect;
-
-// Token shape stored in pool_dooks.tokens
-export interface PoolDookToken {
-  id: string;
-  label: string; // display label, e.g. "noun", "silly adjective"
-  type: string; // canonical type: noun|verb|adjective|adverb|place|name|number|custom
-  position: number;
-  occurrence: number; // disambiguates repeated types (noun #1, noun #2)
-}

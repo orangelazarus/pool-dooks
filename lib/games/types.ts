@@ -1,4 +1,5 @@
 import type React from "react";
+import type { NextRequest, NextResponse } from "next/server";
 import type { Session, Answer } from "@/lib/db/schema";
 
 export interface SessionPlayerInfo {
@@ -28,7 +29,7 @@ export interface GamePlugin {
 
   /**
    * Called when host starts the game.
-   * Returns the ordered array of turn IDs (e.g. token IDs for Pool Dooks).
+   * Returns the ordered array of turn IDs.
    */
   start(
     session: Session,
@@ -51,7 +52,6 @@ export interface GamePlugin {
 
   /**
    * Builds the game-specific props passed to PlayComponent.
-   * Common props (shareCode, currentUserId, hostId, players) are added by the page.
    */
   buildPlayProps(
     session: Session,
@@ -59,18 +59,42 @@ export interface GamePlugin {
   ): Promise<Record<string, unknown>>;
 
   /**
-   * Optional subtitle shown in the lobby (e.g. "12 blanks to fill").
+   * Optional subtitle shown in the lobby.
    */
   getLobbyMeta?(session: Session): Promise<{ subtitle: string }>;
 
   /**
    * Returns a human-readable title for a piece of game content.
-   * Used by the session creation UI to show what's being played.
    */
   getContentMeta(gameContentId: string): Promise<{ title: string }>;
+
+  /**
+   * Handles game-specific API requests routed to /api/games/[gameType]/[...path].
+   * Implement this to own your content API endpoints.
+   */
+  handleRequest?(req: NextRequest, path: string[]): Promise<NextResponse>;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   PlayComponent: React.ComponentType<any>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   RevealComponent: React.ComponentType<any>;
+
+  /**
+   * Page shown at /games/[gameType] — browse/discover content for this game.
+   * Receives searchParams from the dynamic route.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  BrowsePage: React.ComponentType<any>;
+
+  /**
+   * Optional page shown at /games/[gameType]/create — create/edit content.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  CreatePage?: React.ComponentType<any>;
+
+  /**
+   * Optional page shown at /games/[gameType]/library — user's saved content.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  LibraryPage?: React.ComponentType<any>;
 }

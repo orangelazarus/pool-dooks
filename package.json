@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "games:sync": "node scripts/sync-games.mjs",
+    "predev": "npm run games:sync",
+    "prebuild": "npm run games:sync",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

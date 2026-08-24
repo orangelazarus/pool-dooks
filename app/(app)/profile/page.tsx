@@ -1,11 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import { db, profiles, poolDooks } from "@/lib/db";
-import { eq, count } from "drizzle-orm";
+import { db, profiles } from "@/lib/db";
+import { eq } from "drizzle-orm";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BookOpen, Calendar } from "lucide-react";
+import { Calendar } from "lucide-react";
 import { format } from "date-fns";
 
 export default async function ProfilePage() {
@@ -14,10 +13,6 @@ export default async function ProfilePage() {
   if (!user) redirect("/login");
 
   const [profile] = await db.select().from(profiles).where(eq(profiles.id, user.id));
-  const [{ count: libCount }] = await db
-    .select({ count: count() })
-    .from(poolDooks)
-    .where(eq(poolDooks.authorId, user.id));
 
   return (
     <div className="max-w-lg mx-auto px-4 py-12">
@@ -31,19 +26,7 @@ export default async function ProfilePage() {
         <p className="text-muted-foreground text-sm mt-1">{user.email}</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground">
-              <BookOpen className="h-4 w-4" />
-              Pool Dooks
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-3xl font-bold">{libCount}</p>
-          </CardContent>
-        </Card>
-
+      <div className="grid grid-cols-1 gap-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground">
