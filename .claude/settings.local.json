@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx:*)"
+      "Bash(npx:*)",
+      "Bash(npm install:*)",
+      "Bash(python3 -m json.tool)",
+      "Read(//home/mhuch/.config/**)",
+      "Read(//home/mhuch/**)",
+      "Bash(npm run:*)"
     ]
   }
 }
