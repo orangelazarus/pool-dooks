@@ -18,6 +18,21 @@ export const profiles = pgTable("profiles", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
+/**
+ * A pending "play again" proposal on a completed session. Any player may open
+ * one; every player then confirms whether they want to carry on with the same
+ * group. Confirmed players are seeded into the next session — nobody is blocked
+ * waiting on players who decline or never answer.
+ */
+export interface Rematch {
+  proposedBy: string;
+  proposedAt: string;
+  accepted: string[];
+  declined: string[];
+  /** Share code of the next session, set once the proposer has picked content. */
+  newSessionCode: string | null;
+}
+
 export const sessions = pgTable(
   "sessions",
   {
@@ -36,6 +51,7 @@ export const sessions = pgTable(
     currentPlayerId: uuid("current_player_id").references(() => profiles.id),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    rematch: jsonb("rematch").$type<Rematch>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
   (t) => [index("idx_sessions_share_code").on(t.shareCode)]

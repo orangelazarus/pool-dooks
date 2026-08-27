@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { Shuffle, Gamepad2 } from "lucide-react";
+import { Shuffle, Gamepad2, Users } from "lucide-react";
 
 export default function NewSessionPage() {
   const router = useRouter();
@@ -23,6 +23,16 @@ export default function NewSessionPage() {
   const [joining, setJoining] = useState(false);
   const [contentTitle, setContentTitle] = useState<string | null>(null);
   const [supportsRandomize, setSupportsRandomize] = useState(false);
+  const [rematchGroup, setRematchGroup] = useState<string[] | null>(null);
+
+  // If the player opened a "play again" prompt before coming here to pick content,
+  // their confirmed group is carried into whatever they create — say so up front.
+  useEffect(() => {
+    fetch("/api/sessions/pending-rematch")
+      .then((r) => r.json())
+      .then((d) => setRematchGroup(d.pending?.players ?? null))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (gameType && gameContentId) {
@@ -85,6 +95,15 @@ export default function NewSessionPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {rematchGroup && rematchGroup.length > 1 && (
+              <div className="flex items-start gap-2 rounded-lg bg-muted p-3 text-xs">
+                <Users className="h-4 w-4 shrink-0 mt-0.5" />
+                <p>
+                  Your group is coming along:{" "}
+                  <span className="font-medium">{rematchGroup.join(", ")}</span>
+                </p>
+              </div>
+            )}
             {supportsRandomize && (
               <div className="flex items-center justify-between">
                 <div>
