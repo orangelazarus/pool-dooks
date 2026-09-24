@@ -8,4 +8,19 @@ export type SessionEvent =
   | { type: "session:revealed"; payload: Record<string, never> }
   | { type: "rematch:proposed"; payload: { proposedBy: string; proposedByUsername: string } }
   | { type: "rematch:responded"; payload: { playerId: string; username: string; accepted: boolean } }
-  | { type: "rematch:ready"; payload: { shareCode: string } };
+  | { type: "rematch:ready"; payload: { shareCode: string } }
+  | {
+      type: "farkle:state";
+      payload: {
+        currentPlayerId: string;
+        dice: number[] | null;
+        diceRemaining: number;
+        turnScore: number;
+        rollsThisTurn: number;
+        scores: Record<string, number>;
+        farkled: boolean;
+        banked: boolean;
+        hotDice: boolean;
+        bankedAmount?: number;
+      };
+    };
