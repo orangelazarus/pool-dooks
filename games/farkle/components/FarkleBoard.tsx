@@ -232,6 +232,9 @@ export function FarkleBoard({
                   <button
                     key={i}
                     type="button"
+                    data-die-index={i}
+                    data-die-face={face}
+                    data-die-selected={isSelected}
                     disabled={!isMyTurn || busy}
                     onClick={() => toggleDie(i)}
                     className={`rounded-lg border p-2 transition-colors ${
