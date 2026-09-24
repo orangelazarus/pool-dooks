@@ -114,7 +114,7 @@ async function handleRoll(shareCode: string) {
 
     const payload = {
       currentPlayerId: nextId,
-      dice: rolled,
+      dice: null,
       diceRemaining: 6,
       turnScore: 0,
       rollsThisTurn: 0,
