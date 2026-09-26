@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSession } from "@/hooks/useSession";
@@ -63,6 +63,17 @@ export function FarkleBoard({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [rollKey, setRollKey] = useState(0);
+  // Dice from your own bust, shown briefly so you can see what busted you —
+  // deliberately separate from `turn.dice` (the live/interactive roll) so it
+  // can never be mistaken for an actionable roll by anyone.
+  const [bustedDice, setBustedDice] = useState<number[] | null>(null);
+  const bustedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showBustedDice = (dice: number[]) => {
+    if (bustedTimeoutRef.current) clearTimeout(bustedTimeoutRef.current);
+    setBustedDice(dice);
+    bustedTimeoutRef.current = setTimeout(() => setBustedDice(null), 2500);
+  };
 
   const { state, handleEvent } = useGameState(players, {
     tokenOrder: [],
@@ -137,6 +148,7 @@ export function FarkleBoard({
   }
 
   const handleRoll = async () => {
+    setBustedDice(null);
     const data = await call("roll");
     if (!data) return;
     setSelected(new Set());
@@ -149,7 +161,10 @@ export function FarkleBoard({
       turnScore: data.turnScore,
       scores: data.scores,
     }));
-    if (data.farkled) toast.error("Farkle! Turn lost.");
+    if (data.farkled) {
+      toast.error("Farkle! Turn lost.");
+      showBustedDice(data.dice);
+    }
   };
 
   const handleKeep = async () => {
@@ -215,7 +230,21 @@ export function FarkleBoard({
         </p>
       )}
 
-      {turn.dice ? (
+      {bustedDice ? (
+        <div className="space-y-3 text-center">
+          <div className="grid grid-cols-6 gap-2 justify-items-center">
+            {bustedDice.map((face, i) => {
+              const Icon = DICE_ICONS[face - 1];
+              return (
+                <div key={i} className="rounded-lg border border-destructive/40 bg-destructive/10 p-2 opacity-80">
+                  <Icon className="h-7 w-7 text-destructive" />
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-sm font-medium text-destructive">Busted! No scoring dice.</p>
+        </div>
+      ) : turn.dice ? (
         <div className="space-y-3">
           <AnimatePresence mode="wait">
             <motion.div
