@@ -31,9 +31,9 @@ export const RULESETS: Record<Ruleset, RulesetMeta> = {
     label: "KCD (Tavern Dice)",
     minEntryScore: 0,
     bullets: [
-      "Three of a kind = face × 200 (three 1s = 1000)",
+      "Three of a kind = face × 100 (three 1s = 1000)",
       "4/5/6-of-a-kind doubles per extra die (×2, ×4, ×8)",
-      "No straight or three-pairs bonus",
+      "Straights: 1-5 = 500, 2-6 = 750, 1-6 = 1500 (no three-pairs bonus)",
       "Bank any amount, even on your very first turn",
     ],
   },
@@ -74,7 +74,7 @@ function isThreePairs(dice: number[]): boolean {
 }
 
 function nOfAKindPoints(face: number, count: number, ruleset: Ruleset): number {
-  const base3 = face === 1 ? 1000 : ruleset === "kcd" ? face * 200 : face * 100;
+  const base3 = face === 1 ? 1000 : face * 100;
   if (count === 3) return base3;
   if (ruleset === "kcd") {
     return base3 * 2 ** (count - 3);
@@ -82,9 +82,51 @@ function nOfAKindPoints(face: number, count: number, ruleset: Ruleset): number {
   return { 4: 1000, 5: 2000, 6: 3000 }[count as 4 | 5 | 6] ?? 0;
 }
 
+// KCD partial straights use five dice, so a sixth die can ride along — but
+// only if it scores on its own (a 1 or a 5).
+const KCD_PARTIAL_STRAIGHTS = [
+  { faces: [2, 3, 4, 5, 6], points: 750, label: "Straight 2-6" },
+  { faces: [1, 2, 3, 4, 5], points: 500, label: "Straight 1-5" },
+];
+
+function scoreKcdStraight(dice: number[]): ScoreResult | null {
+  if (isStraight(dice)) {
+    return {
+      valid: true,
+      points: 1500,
+      groups: [{ kind: "straight", dice: [...dice], points: 1500, label: "Straight 1-6" }],
+    };
+  }
+  if (dice.length !== 5 && dice.length !== 6) return null;
+
+  for (const straight of KCD_PARTIAL_STRAIGHTS) {
+    const rest = [...dice];
+    const complete = straight.faces.every((f) => {
+      const i = rest.indexOf(f);
+      if (i === -1) return false;
+      rest.splice(i, 1);
+      return true;
+    });
+    if (!complete) continue;
+
+    const group: ScoreGroup = { kind: "straight", dice: straight.faces, points: straight.points, label: straight.label };
+    if (rest.length === 0) return { valid: true, points: group.points, groups: [group] };
+
+    const extra = scoreMelds(rest, "kcd");
+    if (!extra.valid) continue;
+    return { valid: true, points: group.points + extra.points, groups: [group, ...extra.groups] };
+  }
+  return null;
+}
+
 /** Score an arbitrary subset of dice a player wants to set aside from a roll. */
 export function scoreSelection(dice: number[], ruleset: Ruleset): ScoreResult {
   if (dice.length === 0) return { valid: false, points: 0, groups: [] };
+
+  if (ruleset === "kcd") {
+    const straight = scoreKcdStraight(dice);
+    if (straight) return straight;
+  }
 
   if (ruleset === "original") {
     if (isStraight(dice)) {
@@ -103,6 +145,11 @@ export function scoreSelection(dice: number[], ruleset: Ruleset): ScoreResult {
     }
   }
 
+  return scoreMelds(dice, ruleset);
+}
+
+/** Singles and n-of-a-kind only — every die must belong to a scoring group. */
+function scoreMelds(dice: number[], ruleset: Ruleset): ScoreResult {
   const t = tally(dice);
   const groups: ScoreGroup[] = [];
   let valid = true;
