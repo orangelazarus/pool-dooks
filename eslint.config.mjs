@@ -21,7 +21,9 @@ const eslintConfig = defineConfig([
                 "Game code may import from core only @/lib/game-sdk, @/lib/game-sdk/client, @/components/ui/* and @/lib/utils.",
             },
             {
-              regex: "^(\\.\\./)+(app|components|hooks|lib|scripts)(/|$)",
+              // Two or more levels up leaves games/<name>/; one level (e.g. a
+              // game's own ../components) stays inside it.
+              regex: "^(\\.\\./){2,}(app|components|hooks|lib|scripts)(/|$)",
               message: "Game code must not reach into core with relative paths — use @/lib/game-sdk.",
             },
             {
