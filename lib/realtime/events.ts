@@ -23,4 +23,20 @@ export type SessionEvent =
         hotDice: boolean;
         bankedAmount?: number;
       };
+    }
+  | {
+      type: "chess:state";
+      payload: {
+        moves: string[];
+        whitePlayerId: string;
+        blackPlayerId: string;
+        currentPlayerId: string;
+        whiteMs: number | null;
+        blackMs: number | null;
+        turnStartedAt: number | null;
+        serverNow: number;
+        drawOfferedBy: string | null;
+        result: "white" | "black" | "draw" | null;
+        resultReason: string | null;
+      };
     };
