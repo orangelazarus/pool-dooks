@@ -26,11 +26,31 @@ Deploy is a release swap, so a bad build never reaches users:
 Kill the smoke instance by PID from `ss -ltnp`. `pkill -f "PORT=3100"` matches the
 deploy script's own command line and kills it mid-run.
 
+# Games and core are separate
+
+Games are plugins under `games/<name>/`, built with `defineGame()` from
+`lib/game-sdk`. Two rules, both enforced:
+
+- **Game code imports from core only** `@/lib/game-sdk`, `@/lib/game-sdk/client`,
+  `@/components/ui/*` and `@/lib/utils` — never the database, Supabase or push
+  directly. ESLint (`no-restricted-imports`) fails otherwise.
+- **A PR changes a game or core, not both.** If a game needs something new from
+  the SDK, land that as its own core PR first. CI runs
+  `scripts/check-pr-boundary.mjs`; only `lib/games/registry.ts` (generated — run
+  `npm run games:sync` and commit it) and `package.json` / `package-lock.json`
+  may accompany a game change.
+
+Games own no tables. Their content and live state are JSON rows in core's
+`game_content` and `game_state`, so adding or changing a game needs no SQL.
+See `docs/creating-a-game.md`.
+
 # Database migrations
 
 Queries use `db.select().from(table)`, which names every column in the Drizzle
 schema — so a newly added column breaks **all** queries against that table until
 it exists in Postgres. Always apply the migration before deploying the code.
+
+This applies to core tables only (`lib/db/schema.ts`); games have none.
 
 Migrations are hand-written numbered SQL in `drizzle/`. `drizzle/meta/_journal.json`
 only tracks `0000`, so the snapshot is stale and **`npm run db:push` can propose

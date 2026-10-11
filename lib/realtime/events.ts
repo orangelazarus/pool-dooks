@@ -19,35 +19,4 @@ export type SessionEvent =
   | { type: "rematch:ready"; payload: { shareCode: string } }
   // Everything a game built on lib/game-sdk broadcasts. Core doesn't know or
   // care what `name` and `data` mean — that is between a game's server and client.
-  | { type: "game:event"; payload: { name: string; data: unknown } }
-  | {
-      type: "farkle:state";
-      payload: {
-        currentPlayerId: string;
-        dice: number[] | null;
-        diceRemaining: number;
-        turnScore: number;
-        rollsThisTurn: number;
-        scores: Record<string, number>;
-        farkled: boolean;
-        banked: boolean;
-        hotDice: boolean;
-        bankedAmount?: number;
-      };
-    }
-  | {
-      type: "chess:state";
-      payload: {
-        moves: string[];
-        whitePlayerId: string;
-        blackPlayerId: string;
-        currentPlayerId: string;
-        whiteMs: number | null;
-        blackMs: number | null;
-        turnStartedAt: number | null;
-        serverNow: number;
-        drawOfferedBy: string | null;
-        result: "white" | "black" | "draw" | null;
-        resultReason: string | null;
-      };
-    };
+  | { type: "game:event"; payload: { name: string; data: unknown } };

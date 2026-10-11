@@ -113,7 +113,7 @@ export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>):
       return { title: content.title };
     },
 
-    async start(session, _players, randomize) {
+    async start(session, randomize) {
       const ctx = await ctxFor(session);
       const started = (await def.start(ctx, { randomize })) ?? {};
       return {

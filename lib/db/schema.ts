@@ -38,9 +38,8 @@ export const sessions = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     shareCode: text("share_code").notNull().unique(),
-    gameType: text("game_type").notNull().default("pool_dooks"),
+    gameType: text("game_type").notNull(),
     gameContentId: uuid("game_content_id"),
-    poolDookId: uuid("pool_dook_id"), // legacy: no FK — pool_dooks table is game-owned
     hostId: uuid("host_id")
       .notNull()
       .references(() => profiles.id),

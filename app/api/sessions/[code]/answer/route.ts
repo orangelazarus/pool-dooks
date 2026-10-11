@@ -77,7 +77,6 @@ export async function POST(
 
     const hints = await plugin.getAnswerHints({
       session,
-      players: players.map((p, i) => ({ playerId: p.playerId!, username: "", avatarUrl: null, joinOrder: i })),
       tokenId: parsed.data.tokenId,
       value: parsed.data.value,
       nextTokenId,

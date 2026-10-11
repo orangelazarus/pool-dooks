@@ -7,12 +7,11 @@ const eslintConfig = defineConfig([
   ...nextTs,
   // Games are plugins: they talk to core only through the game SDK, never to
   // the database, auth or push directly. See docs/creating-a-game.md.
-  // A warning while the existing games are moved onto the SDK; becomes an error after.
   {
     files: ["games/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
-        "warn",
+        "error",
         {
           patterns: [
             {

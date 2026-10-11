@@ -1,23 +1,20 @@
 import type React from "react";
 import type { NextRequest, NextResponse } from "next/server";
-import type { Session, Answer } from "@/lib/db/schema";
-
-export interface SessionPlayerInfo {
-  playerId: string;
-  username: string;
-  avatarUrl?: string | null;
-  joinOrder: number;
-}
+import type { Session } from "@/lib/db/schema";
 
 export interface AnswerContext {
   session: Session;
-  players: SessionPlayerInfo[];
   tokenId: string;
   value: string;
   nextTokenId: string | null;
   nextPlayerId: string | null;
 }
 
+/**
+ * The shape the session engine consumes. Games do not implement this — they
+ * call defineGame() from lib/game-sdk, which builds it and puts core's
+ * authentication, access and input checks in front of every game handler.
+ */
 export interface GamePlugin {
   gameType: string;
   displayName: string;
@@ -31,11 +28,7 @@ export interface GamePlugin {
    * Called when host starts the game.
    * Returns the ordered array of turn IDs.
    */
-  start(
-    session: Session,
-    players: SessionPlayerInfo[],
-    randomize: boolean
-  ): Promise<{ tokenOrder: string[]; firstPlayerId?: string }>;
+  start(session: Session, randomize: boolean): Promise<{ tokenOrder: string[]; firstPlayerId?: string }>;
 
   /**
    * Called after an answer is recorded.
@@ -54,18 +47,12 @@ export interface GamePlugin {
   /**
    * Builds the result payload sent to the reveal screen.
    */
-  buildResult(
-    session: Session,
-    answers: Answer[]
-  ): Promise<Record<string, unknown>>;
+  buildResult(session: Session): Promise<Record<string, unknown>>;
 
   /**
    * Builds the game-specific props passed to PlayComponent.
    */
-  buildPlayProps(
-    session: Session,
-    players: SessionPlayerInfo[]
-  ): Promise<Record<string, unknown>>;
+  buildPlayProps(session: Session): Promise<Record<string, unknown>>;
 
   /**
    * Optional subtitle shown in the lobby.
@@ -78,10 +65,10 @@ export interface GamePlugin {
   getContentMeta(gameContentId: string): Promise<{ title: string }>;
 
   /**
-   * Handles game-specific API requests routed to /api/games/[gameType]/[...path].
-   * Implement this to own your content API endpoints.
+   * Serves /api/games/[gameType]/[...path]: runs the game's declared actions
+   * behind core's checks.
    */
-  handleRequest?(req: NextRequest, path: string[]): Promise<NextResponse>;
+  handleRequest(req: NextRequest, path: string[]): Promise<NextResponse>;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   PlayComponent: React.ComponentType<any>;

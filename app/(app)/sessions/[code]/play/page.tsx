@@ -46,15 +46,7 @@ export default async function PlayPage({
     .orderBy(sessionPlayers.joinOrder);
 
   const plugin = getPlugin(session.gameType);
-  const gameProps = await plugin.buildPlayProps(
-    session,
-    players.map((p, i) => ({
-      playerId: p.playerId!,
-      username: p.username ?? "Unknown",
-      avatarUrl: p.avatarUrl,
-      joinOrder: i,
-    }))
-  );
+  const gameProps = await plugin.buildPlayProps(session);
 
   const { PlayComponent } = plugin;
 

@@ -19,9 +19,8 @@ export async function GET(
   }
 
   const plugin = getPlugin(session.gameType);
-  const gameContentId = session.gameContentId ?? session.poolDookId;
-  const contentMeta = gameContentId
-    ? await plugin.getContentMeta(gameContentId).catch(() => null)
+  const contentMeta = session.gameContentId
+    ? await plugin.getContentMeta(session.gameContentId).catch(() => null)
     : null;
 
   const players = await db
