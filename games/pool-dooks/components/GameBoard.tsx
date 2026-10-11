@@ -12,6 +12,7 @@ import { TOKEN_COLORS } from "./BlankNode";
 import { toast } from "sonner";
 import { Send, Clock } from "lucide-react";
 import type { PoolDookToken } from "../schema";
+import { describeAnswer } from "@/lib/sessions/answer-announcement";
 
 const HINTS: Array<{ types: string[]; check: (v: string) => boolean; message: string }> = [
   {
@@ -38,6 +39,11 @@ function getHint(type: string | undefined, value: string): string | null {
   return rule.check(value.trim()) ? rule.message : null;
 }
 
+interface GivenAnswer {
+  value: string;
+  username: string;
+}
+
 interface GameBoardProps {
   shareCode: string;
   currentUserId: string;
@@ -47,6 +53,8 @@ interface GameBoardProps {
   initialCurrentTokenId: string;
   initialCurrentPlayerId: string;
   initialTokenIndex: number;
+  /** Answers already given, by token id — present on a reload or for a late observer. */
+  initialAnswers?: Record<string, GivenAnswer>;
   players: Array<{ playerId: string; username: string; avatarUrl?: string | null }>;
 }
 
@@ -58,6 +66,7 @@ export function GameBoard({
   initialCurrentTokenId,
   initialCurrentPlayerId,
   initialTokenIndex,
+  initialAnswers,
   players,
 }: GameBoardProps) {
   const router = useRouter();
@@ -72,8 +81,11 @@ export function GameBoard({
     currentTokenId: initialCurrentTokenId,
     currentPlayerId: initialCurrentPlayerId,
     tokenIndex: initialTokenIndex,
-    answeredIds: new Set<string>(),
+    answeredIds: new Set<string>(Object.keys(initialAnswers ?? {})),
   });
+  // What each blank was filled with. Players never see the story while
+  // playing, so the words are shown to everyone as they come in.
+  const [given, setGiven] = useState<Record<string, GivenAnswer>>(initialAnswers ?? {});
 
   useSession(shareCode, (event) => {
     handleEvent(event);
@@ -91,6 +103,11 @@ export function GameBoard({
         ...prev,
         answeredIds: new Set([...prev.answeredIds, event.payload.tokenId]),
       }));
+      const { tokenId, playerId, answer: announced } = event.payload;
+      if (announced) {
+        setGiven((prev) => ({ ...prev, [tokenId]: { value: announced.value, username: announced.username } }));
+        if (playerId !== currentUserId) toast(describeAnswer(announced));
+      }
     }
     if (event.type === "session:completed" || event.type === "session:revealed") {
       router.push(`/sessions/${shareCode}/reveal`);
@@ -158,11 +175,19 @@ export function GameBoard({
                 {idx + 1}
               </span>
               <span
-                className={`px-2 py-0.5 rounded-full text-xs font-medium border flex-1 ${
+                className={`px-2 py-0.5 rounded-full text-xs font-medium border shrink-0 ${
                   TOKEN_COLORS[token?.type ?? "custom"]
                 }`}
               >
                 {token?.label ?? tokenId}
+              </span>
+              <span className="flex-1 min-w-0 text-sm truncate" data-answer-for={tokenId}>
+                {given[tokenId] && (
+                  <>
+                    <span className="font-medium">&ldquo;{given[tokenId].value}&rdquo;</span>
+                    <span className="text-xs text-muted-foreground"> — {given[tokenId].username}</span>
+                  </>
+                )}
               </span>
               {isAnswered && (
                 <span className="text-green-600 text-xs">✓</span>

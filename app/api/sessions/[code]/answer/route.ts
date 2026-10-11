@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { db, sessions, answers, sessionPlayers } from "@/lib/db";
+import { db, sessions, answers, sessionPlayers, profiles } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { sendPushToUser, sendPushToUsers } from "@/lib/push/send";
 import { getPlugin } from "@/lib/games/registry";
+import { answerPush, nextTurnPush, type AnnouncedAnswer } from "@/lib/sessions/answer-announcement";
 
 const Schema = z.object({
   tokenId: z.string(),
@@ -57,19 +58,54 @@ export async function POST(
       });
     }
 
+    const nextIndex = (session.currentTokenIndex ?? 0) + 1;
+    const isComplete = nextIndex >= tokenOrder.length;
+    const plugin = getPlugin(session.gameType);
+
+    const players = await db
+      .select({ playerId: sessionPlayers.playerId, joinOrder: sessionPlayers.joinOrder })
+      .from(sessionPlayers)
+      .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.isActive, true)))
+      .orderBy(sessionPlayers.joinOrder);
+    const otherIds = players
+      .map((p) => p.playerId)
+      .filter((id): id is string => id !== null && id !== user.id);
+
+    const currentPlayerIndex = players.findIndex((p) => p.playerId === user.id);
+    const nextPlayerId = isComplete ? null : players[(currentPlayerIndex + 1) % players.length].playerId!;
+    const nextTokenId = isComplete ? null : tokenOrder[nextIndex];
+
+    const hints = await plugin.getAnswerHints({
+      session,
+      players: players.map((p, i) => ({ playerId: p.playerId!, username: "", avatarUrl: null, joinOrder: i })),
+      tokenId: parsed.data.tokenId,
+      value: parsed.data.value,
+      nextTokenId,
+      nextPlayerId,
+    }).catch(() => ({ nextTokenLabel: undefined, answered: undefined }));
+
+    // Only games that opt in (by describing the answered blank) share answers
+    // during play. For a repeated token the stored answer is the first one given.
+    let announced: AnnouncedAnswer | null = null;
+    if (hints.answered) {
+      const [profile] = await db.select({ username: profiles.username }).from(profiles).where(eq(profiles.id, user.id));
+      announced = {
+        username: profile?.username ?? "A player",
+        value: existing?.value ?? parsed.data.value,
+        label: hints.answered.label,
+        tokenType: hints.answered.type,
+      };
+    }
+
     // Non-critical: broadcast answer confirmed
     supabase.channel(`session:${code}`).send({
       type: "broadcast",
       event: "answer:confirmed",
       payload: {
         type: "answer:confirmed",
-        payload: { tokenId: parsed.data.tokenId, playerId: user.id },
+        payload: { tokenId: parsed.data.tokenId, playerId: user.id, answer: announced ?? undefined },
       },
     }).catch(() => {});
-
-    const nextIndex = (session.currentTokenIndex ?? 0) + 1;
-    const isComplete = nextIndex >= tokenOrder.length;
-    const plugin = getPlugin(session.gameType);
 
     if (isComplete) {
       const completedAt = new Date();
@@ -89,46 +125,22 @@ export async function POST(
           event: "session:revealed",
           payload: { type: "session:revealed", payload: {} },
         }),
-        db.select({ playerId: sessionPlayers.playerId })
-          .from(sessionPlayers)
-          .where(eq(sessionPlayers.sessionId, session.id))
-          .then((players) => {
-            const otherIds = players
-              .map((p) => p.playerId)
-              .filter((id): id is string => id !== null && id !== user.id);
-            return sendPushToUsers(otherIds, {
-              title: "Story revealed!",
-              body: "All blanks filled — come see the hilarious result!",
-              url: `/${code}/reveal`,
-            });
-          }),
+        sendPushToUsers(otherIds, {
+          title: "Story revealed!",
+          body: "All blanks filled — come see the hilarious result!",
+          url: `/${code}/reveal`,
+        }),
       ]).catch(() => {});
     } else {
-      const players = await db
-        .select({ playerId: sessionPlayers.playerId, joinOrder: sessionPlayers.joinOrder })
-        .from(sessionPlayers)
-        .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.isActive, true)))
-        .orderBy(sessionPlayers.joinOrder);
-
-      const currentPlayerIndex = players.findIndex((p) => p.playerId === user.id);
-      const nextPlayerIndex = (currentPlayerIndex + 1) % players.length;
-      const nextPlayerId = players[nextPlayerIndex].playerId!;
-      const nextTokenId = tokenOrder[nextIndex];
-
       await db
         .update(sessions)
         .set({ currentTokenIndex: nextIndex, currentPlayerId: nextPlayerId })
         .where(eq(sessions.id, session.id));
 
-      const hints = await plugin.getAnswerHints({
-        session,
-        players: players.map((p, i) => ({ playerId: p.playerId!, username: "", avatarUrl: null, joinOrder: i })),
-        tokenId: parsed.data.tokenId,
-        value: parsed.data.value,
-        nextTokenId,
-        nextPlayerId,
-      }).catch(() => ({ nextTokenLabel: undefined }))
-      const nextTokenLabel = hints?.nextTokenLabel;
+      const playUrl = `/${code}/play`;
+      // The next player hears about the answer in their "your turn" push;
+      // everyone else gets the answer on its own.
+      const bystanderIds = otherIds.filter((id) => id !== nextPlayerId);
 
       Promise.all([
         supabase.channel(`session:${code}`).send({
@@ -137,19 +149,18 @@ export async function POST(
           payload: {
             type: "turn:changed",
             payload: {
-              currentTokenId: nextTokenId,
-              currentPlayerId: nextPlayerId,
+              currentTokenId: nextTokenId!,
+              currentPlayerId: nextPlayerId!,
               tokenIndex: nextIndex,
               total: tokenOrder.length,
             },
           },
         }),
         nextPlayerId !== user.id
-          ? sendPushToUser(nextPlayerId, {
-              title: "Your turn!",
-              body: `Fill in the blank: ${nextTokenLabel ?? "word"}`,
-              url: `/${code}/play`,
-            })
+          ? sendPushToUser(nextPlayerId!, nextTurnPush(playUrl, hints.nextTokenLabel, announced))
+          : Promise.resolve(),
+        announced && bystanderIds.length > 0
+          ? sendPushToUsers(bystanderIds, answerPush(playUrl, announced))
           : Promise.resolve(),
       ]).catch(() => {});
     }
