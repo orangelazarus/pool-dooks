@@ -6,6 +6,7 @@ import type { Session } from "@/lib/db/schema";
 import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
 import { createClient } from "@/lib/supabase/server";
 import { sendPushToUser } from "@/lib/push/send";
+import { getViewerRole } from "@/lib/sessions/access";
 import { chessGames, chessStates, type ChessState } from "./schema";
 import { remainingMs, timeControlLabel, TIME_CONTROLS, type Side } from "./clock";
 import {
@@ -333,6 +334,14 @@ async function handleFlag(shareCode: string) {
 async function handleState(shareCode: string) {
   const [session] = await db.select().from(sessions).where(eq(sessions.shareCode, shareCode));
   if (!session) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+
+  // A private game's live state is for its players only; a public one is open to watch.
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if ((await getViewerRole(session, user?.id)) === "denied") {
+    return NextResponse.json({ error: "This game is private" }, { status: 403 });
+  }
+
   const [state] = await db.select().from(chessStates).where(eq(chessStates.sessionId, session.id));
   if (!state) return NextResponse.json({ error: "Game state missing" }, { status: 404 });
   return NextResponse.json(toPayload(state, Date.now()));

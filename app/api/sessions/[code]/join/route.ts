@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
 import { eq, count, and } from "drizzle-orm";
 import { createClient as createSupabaseAdmin } from "@/lib/supabase/server";
+import { isLobbyFull } from "@/lib/sessions/access";
 
 export async function POST(
   _req: NextRequest,
@@ -32,6 +33,11 @@ export async function POST(
       .set({ isActive: true })
       .where(eq(sessionPlayers.id, existing.id));
     return NextResponse.json({ ok: true });
+  }
+
+  // Checked after the already-joined case so existing players can always return.
+  if (await isLobbyFull(session)) {
+    return NextResponse.json({ error: "Lobby is full" }, { status: 409 });
   }
 
   const [{ count: playerCount }] = await db

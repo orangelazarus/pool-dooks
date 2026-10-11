@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { useSession } from "@/hooks/useSession";
 import { useGameState } from "@/hooks/useGameState";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
-import { Bell, Crown, Play, Users } from "lucide-react";
+import { Bell, Crown, Eye, Globe, Lock, Play, Users } from "lucide-react";
 import { toast } from "sonner";
 
 interface LobbyProps {
@@ -23,6 +23,9 @@ interface LobbyProps {
   gameDisplayName: string;
   subtitle: string;
   minPlayers: number;
+  isPublic: boolean;
+  /** The lobby was already full: this viewer isn't a player and will watch the game. */
+  isSpectator: boolean;
 }
 
 export function Lobby({
@@ -33,6 +36,8 @@ export function Lobby({
   gameDisplayName,
   subtitle,
   minPlayers,
+  isPublic,
+  isSpectator,
 }: LobbyProps) {
   const router = useRouter();
   const { status: pushStatus, subscribe } = usePushNotifications();
@@ -78,6 +83,10 @@ export function Lobby({
         {subtitle && (
           <p className="text-muted-foreground text-sm mt-1">{subtitle}</p>
         )}
+        <Badge variant="outline" className="mt-2 gap-1 text-xs" data-visibility={isPublic ? "public" : "private"}>
+          {isPublic ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+          {isPublic ? "Public — anyone can join or watch" : "Private — invite only"}
+        </Badge>
       </div>
 
       <div className="mb-8">
@@ -117,7 +126,14 @@ export function Lobby({
         )}
       </div>
 
-      {pushStatus === "idle" && (
+      {isSpectator && (
+        <div className="flex items-start gap-2 rounded-lg bg-muted p-3 text-sm" data-spectator>
+          <Eye className="h-4 w-4 shrink-0 mt-0.5" />
+          <p>The lobby is full — you&apos;ll watch when the game starts.</p>
+        </div>
+      )}
+
+      {!isSpectator && pushStatus === "idle" && (
         <Button
           variant="outline"
           className="w-full gap-2 mb-3"
@@ -140,7 +156,7 @@ export function Lobby({
         </Button>
       )}
 
-      {!isHost && (
+      {!isHost && !isSpectator && (
         <p className="text-center text-sm text-muted-foreground">
           Waiting for the host to start the game...
         </p>

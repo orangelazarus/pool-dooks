@@ -8,6 +8,7 @@ import { buttonVariants } from "@/components/ui/button";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { signInAsGuest, GUEST_NAME_MIN, GUEST_NAME_MAX } from "@/lib/auth/guest";
 
 interface GuestJoinProps {
   shareCode: string;
@@ -20,48 +21,17 @@ export function GuestJoin({ shareCode, gameTitle }: GuestJoinProps) {
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (name.trim().length < GUEST_NAME_MIN) return;
     setLoading(true);
 
     try {
-      const { createClient } = await import("@/lib/supabase/client");
-      const supabase = createClient();
-
-      const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
-      if (anonError || !anonData.user) {
-        toast.error("Failed to join. Please try again.");
+      const result = await signInAsGuest(name);
+      if (!result.ok) {
+        toast.error(result.error);
         return;
       }
-
-      const userId = anonData.user.id;
-      const baseName = name.trim();
-
-      // Try to create profile; if username taken, append short suffix
-      let username = baseName;
-      let profileRes = await fetch("/api/auth/profile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, username }),
-      });
-
-      if (profileRes.status === 409) {
-        const suffix = Math.random().toString(36).slice(2, 5);
-        username = `${baseName}_${suffix}`;
-        profileRes = await fetch("/api/auth/profile", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId, username }),
-        });
-      }
-
-      if (!profileRes.ok) {
-        toast.error("Failed to set up your profile. Please try again.");
-        await supabase.auth.signOut();
-        return;
-      }
-
-      if (username !== baseName) {
-        toast.info(`Joined as "${username}" (your name was taken)`);
+      if (result.renamed) {
+        toast.info(`Joined as "${result.username}" (your name was taken)`);
       }
 
       // Reload so the server sees the new session and auto-joins
@@ -89,12 +59,13 @@ export function GuestJoin({ shareCode, gameTitle }: GuestJoinProps) {
                 placeholder="e.g. Alex"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                maxLength={30}
+                minLength={GUEST_NAME_MIN}
+                maxLength={GUEST_NAME_MAX}
                 required
                 autoFocus
               />
             </div>
-            <Button type="submit" className="w-full" disabled={loading || !name.trim()}>
+            <Button type="submit" className="w-full" disabled={loading || name.trim().length < GUEST_NAME_MIN}>
               {loading ? "Joining..." : "Join Game"}
             </Button>
           </form>

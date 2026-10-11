@@ -3,6 +3,9 @@ import { redirect } from "next/navigation";
 import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import { getPlugin } from "@/lib/games/registry";
+import { getViewerRole } from "@/lib/sessions/access";
+import { SessionNotice } from "@/components/session/SessionNotice";
+import { Eye } from "lucide-react";
 
 export default async function PlayPage({
   params,
@@ -12,12 +15,24 @@ export default async function PlayPage({
   const { code } = await params;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect(`/sessions/${code}`);
 
   const [session] = await db.select().from(sessions).where(eq(sessions.shareCode, code));
   if (!session) redirect("/home");
   if (session.status === "lobby") redirect(`/sessions/${code}`);
   if (session.status === "completed") redirect(`/sessions/${code}/reveal`);
+
+  // Players play. Anyone else may watch a public game, and is turned away from
+  // a private one.
+  const role = await getViewerRole(session, user?.id);
+  if (role === "denied") {
+    return (
+      <SessionNotice
+        title="This game is private"
+        message="Only its players can see a private game while it's being played."
+        signInNext={user ? undefined : `/sessions/${code}/play`}
+      />
+    );
+  }
 
   const players = await db
     .select({
@@ -43,10 +58,12 @@ export default async function PlayPage({
 
   const { PlayComponent } = plugin;
 
-  return (
+  const board = (
     <PlayComponent
       shareCode={code}
-      currentUserId={user.id}
+      // Observers have no seat: an id that matches no player keeps every
+      // game's play screen in its read-only "waiting" state.
+      currentUserId={role === "player" ? user!.id : ""}
       hostId={session.hostId}
       players={players.map((p) => ({
         playerId: p.playerId!,
@@ -55,5 +72,18 @@ export default async function PlayPage({
       }))}
       {...gameProps}
     />
+  );
+  if (role === "player") return board;
+
+  return (
+    <>
+      <div className="border-b bg-muted/50" data-observer-banner>
+        <p className="max-w-lg mx-auto px-4 py-2 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Eye className="h-4 w-4" />
+          You&apos;re watching this game
+        </p>
+      </div>
+      {board}
+    </>
   );
 }

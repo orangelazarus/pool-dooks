@@ -4,6 +4,7 @@ import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { Lobby } from "@/components/session/Lobby";
 import { GuestJoin } from "@/components/session/GuestJoin";
+import { SessionNotice } from "@/components/session/SessionNotice";
 import { getPlugin } from "@/lib/games/registry";
 
 export default async function SessionPage({
@@ -23,11 +24,7 @@ export default async function SessionPage({
 
   const plugin = getPlugin(session.gameType);
 
-  // Not logged in — show guest join form
-  if (!user) {
-    const { subtitle } = await plugin.getLobbyMeta?.(session) ?? { subtitle: "" };
-    return <GuestJoin shareCode={code} gameTitle={`${plugin.displayName}${subtitle ? ` — ${subtitle}` : ""}`} />;
-  }
+  const { subtitle } = await plugin.getLobbyMeta?.(session) ?? { subtitle: "" };
 
   const players = await db
     .select({
@@ -40,22 +37,43 @@ export default async function SessionPage({
     .where(eq(sessionPlayers.sessionId, session.id))
     .orderBy(sessionPlayers.joinOrder);
 
-  // Auto-join if not a player
-  const isPlayer = players.some((p) => p.playerId === user.id);
-  if (!isPlayer) {
-    await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/sessions/${code}/join`, {
-      method: "POST",
-      headers: { cookie: (await (await import("next/headers")).cookies()).toString() },
-    }).catch(() => {});
-    redirect(`/sessions/${code}`);
+  const isPlayer = !!user && players.some((p) => p.playerId === user.id);
+  const isFull = players.length >= plugin.maxPlayers;
+
+  // A full lobby takes no more players. If the game is public the extra
+  // arrivals wait here as spectators and watch once it starts; a private game
+  // has nothing for them to see.
+  const isSpectator = !isPlayer && isFull;
+  if (isSpectator && !session.isPublic) {
+    return (
+      <SessionNotice
+        title="This lobby is full"
+        message={`${plugin.displayName} takes up to ${plugin.maxPlayers} players, and this game is private.`}
+        signInNext={user ? undefined : `/sessions/${code}`}
+      />
+    );
   }
 
-  const { subtitle } = await plugin.getLobbyMeta?.(session) ?? { subtitle: "" };
+  if (!isSpectator) {
+    // Not logged in — show guest join form
+    if (!user) {
+      return <GuestJoin shareCode={code} gameTitle={`${plugin.displayName}${subtitle ? ` — ${subtitle}` : ""}`} />;
+    }
+
+    // Auto-join if not a player
+    if (!isPlayer) {
+      await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/sessions/${code}/join`, {
+        method: "POST",
+        headers: { cookie: (await (await import("next/headers")).cookies()).toString() },
+      }).catch(() => {});
+      redirect(`/sessions/${code}`);
+    }
+  }
 
   return (
     <Lobby
       shareCode={code}
-      currentUserId={user.id}
+      currentUserId={user?.id ?? ""}
       hostId={session.hostId}
       initialPlayers={players.map((p) => ({
         playerId: p.playerId!,
@@ -65,6 +83,8 @@ export default async function SessionPage({
       gameDisplayName={plugin.displayName}
       subtitle={subtitle}
       minPlayers={plugin.minPlayers}
+      isPublic={session.isPublic}
+      isSpectator={isSpectator}
     />
   );
 }

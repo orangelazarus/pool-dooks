@@ -3,6 +3,8 @@ import { z } from "zod";
 import { eq, and, desc } from "drizzle-orm";
 import type { GamePlugin, SessionPlayerInfo, AnswerContext } from "@/lib/games/types";
 import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
+import type { Session } from "@/lib/db/schema";
+import { getViewerRole } from "@/lib/sessions/access";
 import { createClient } from "@/lib/supabase/server";
 import { sendPushToUser, sendPushToUsers } from "@/lib/push/send";
 import { farkleGames, farkleTurns } from "./schema";
@@ -40,6 +42,13 @@ async function loadSessionAndTurn(shareCode: string) {
   if (!session) return null;
   const [turn] = await db.select().from(farkleTurns).where(eq(farkleTurns.sessionId, session.id));
   return { session, turn };
+}
+
+/** A private game's live state is for its players only; a public one is open to watch. */
+async function canView(session: Session) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  return (await getViewerRole(session, user?.id)) !== "denied";
 }
 
 async function handleRoot(req: NextRequest) {
@@ -312,6 +321,7 @@ async function handleState(shareCode: string) {
   const loaded = await loadSessionAndTurn(shareCode);
   if (!loaded) return NextResponse.json({ error: "Session not found" }, { status: 404 });
   const { session, turn } = loaded;
+  if (!(await canView(session))) return NextResponse.json({ error: "This game is private" }, { status: 403 });
   return NextResponse.json({
     status: session.status,
     currentPlayerId: session.currentPlayerId,

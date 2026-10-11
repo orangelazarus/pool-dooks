@@ -12,6 +12,7 @@ const CreateSchema = z.object({
   gameType: z.string(),
   gameContentId: z.string().uuid(),
   randomizeOrder: z.boolean().optional().default(false),
+  isPublic: z.boolean().optional().default(false),
   /**
    * Share code of a completed session whose confirmed players carry over. Usually
    * omitted — the caller's own open proposal is resolved server-side instead, so
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { gameType, gameContentId, randomizeOrder, rematchFrom, skipRematch } = parsed.data;
+  const { gameType, gameContentId, randomizeOrder, isPublic, rematchFrom, skipRematch } = parsed.data;
 
   // Validate the game type and content exist via the plugin
   try {
@@ -110,6 +111,7 @@ export async function POST(req: NextRequest) {
       gameContentId,
       hostId: user.id,
       randomizeOrder,
+      isPublic,
     })
     .returning();
 
