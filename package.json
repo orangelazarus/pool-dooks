@@ -30,6 +30,7 @@
     "@types/pg": "^8.23.1",
     "@types/web-push": "^3.6.4",
     "ai": "^7.0.76",
+    "chess.js": "^1.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
