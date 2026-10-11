@@ -1,533 +1,412 @@
 # Creating a New Game
 
-This guide walks through adding a new game to the platform. As a worked example we'll build **"Hot Take"** — the host writes a controversial opinion, players vote agree or disagree, and the reveal shows the split.
+This guide walks through adding a game to the platform. As a worked example we'll build **"Hot Take"** — the host writes a controversial opinion, players vote agree or disagree, and the reveal shows the split.
 
-The platform handles sessions, lobbies, turn cycling, real-time sync, push notifications, and routing. You only write the game logic.
+The platform handles accounts and guests, sessions, lobbies, public games and spectators, real-time sync, push notifications, storage and routing. You write the game.
 
----
-
-## How isolation works
-
-Each game lives entirely inside `games/<game-name>/`. Deleting that directory removes the game from the platform — zero edits to any base file required.
-
-When you run `npm run games:sync` (or `npm run dev` / `npm run build`, which run it automatically), a script scans `games/*/plugin.ts` and generates `lib/games/registry.ts`. The home page, session creation, lobby, and routing all derive from the registry.
+Every code block below is a complete file from a working version of this example.
 
 ---
 
-## Overview of what you'll create
+## The rules
 
-Everything lives inside `games/hot-take/`:
+1. **A game lives entirely inside `games/<name>/`.** Adding one needs no change to core code and no SQL. Deleting the directory removes the game.
+2. **Games talk to core only through the game SDK.** Game code may import:
+   - `@/lib/game-sdk` (server) and `@/lib/game-sdk/client` (browser)
+   - `@/components/ui/*` and `@/lib/utils`
+   - its own npm packages
+
+   Nothing else: no database client, no Supabase, no push sender. ESLint enforces this.
+3. **A game PR does not touch core.** If your game needs something the SDK doesn't offer, add it to the SDK in its own PR first. CI fails a PR that changes a game directory together with core code. The generated `lib/games/registry.ts` and `package.json` / `package-lock.json` are the only files allowed alongside a game.
+
+The SDK is a boundary enforced by lint and review, not a sandbox: games still run in the same server process as core.
+
+---
+
+## What you'll create
 
 | File | Purpose |
 |---|---|
-| `games/hot-take/schema.ts` | Drizzle table for game content |
-| `games/hot-take/plugin.ts` | All server-side logic + content API (`handleRequest`) |
-| `games/hot-take/components/HotTakeBoard.tsx` | What players see during gameplay |
-| `games/hot-take/components/HotTakeReveal.tsx` | End-of-game reveal screen |
-| `games/hot-take/pages/BrowsePage.tsx` | Browse/create page at `/games/hot_take` |
+| `games/hot-take/schema.ts` | Types and Zod schemas for what the game stores and accepts |
+| `games/hot-take/plugin.ts` | The game: `defineGame({...})` |
+| `games/hot-take/components/HotTakeBoard.tsx` | What players (and spectators) see during play |
+| `games/hot-take/components/HotTakeReveal.tsx` | End-of-game screen |
+| `games/hot-take/pages/BrowsePage.tsx` | Page at `/games/hot_take`: pick or create something to play |
 
-After creating the plugin file, run `npm run games:sync` once. That's it.
-
----
-
-## 1. Design your turn model
-
-Every game shares the same turn engine:
-
-- **`tokenOrder`** — an ordered array of string IDs, one entry per turn
-- **`currentTokenIndex`** — which turn we're on
-- **`currentPlayerId`** — whose turn it is
-
-After each answer the engine advances to the next token and cycles to the next player. When `currentTokenIndex >= tokenOrder.length`, the game is complete.
-
-For Hot Take, each player votes once on the same statement:
-
-```
-tokenOrder = ["vote_<player1id>", "vote_<player2id>", "vote_<player3id>"]
-```
-
-Each player submits `{ tokenId: "vote_<theirId>", value: "agree" | "disagree" }`. After all votes are in, the reveal fires automatically.
+Then run `npm run games:sync` (or `npm run dev` / `npm run build`, which run it first). It scans `games/*/plugin.ts` and regenerates `lib/games/registry.ts`; commit that file. The game then appears on the home page.
 
 ---
 
-## 2. Create the DB schema
+## 1. Decide what you store
+
+Core gives every game two kinds of storage, both JSON:
+
+- **Content** — what a host sets up before a session exists, and what `sessions.game_content_id` points at. Title, author and public/private are core's columns; everything else goes in `data`.
+- **State** — one row per session, for the live game. Every write is version-checked.
+
+You describe their shapes in TypeScript and validate input with Zod. There are no tables to create.
 
 `games/hot-take/schema.ts`:
 
 ```ts
-import { pgTable, uuid, text, timestamp } from "drizzle-orm/pg-core";
-import { profiles } from "@/lib/db/schema";
+import { z } from "zod";
 
-export const hotTakes = pgTable("hot_takes", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  authorId: uuid("author_id").references(() => profiles.id, { onDelete: "set null" }),
-  statement: text("statement").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+/** Content row: what the host set up. */
+export interface HotTakeContent {
+  statement: string;
+}
+
+/** Session state: who has voted which way. */
+export interface HotTakeState {
+  votes: Record<string, "agree" | "disagree">;
+}
+
+export const CreateSchema = z.object({
+  statement: z.string().min(5).max(200),
 });
 
-export type HotTake = typeof hotTakes.$inferSelect;
-```
-
-`drizzle.config.ts` already includes `games/*/schema.ts` in its schema glob, so Drizzle picks this up automatically.
-
-### Run the migration
-
-The app DB user can't `CREATE TABLE`, so run this in the **Supabase SQL Editor**:
-
-```sql
-CREATE TABLE hot_takes (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  author_id uuid REFERENCES profiles(id) ON DELETE SET NULL,
-  statement text NOT NULL,
-  created_at timestamptz DEFAULT now()
-);
+export const VoteSchema = z.object({
+  vote: z.enum(["agree", "disagree"]),
+});
 ```
 
 ---
 
-## 3. Write the plugin
+## 2. Define the game
 
-`games/hot-take/plugin.ts` — this is the heart of the game. It implements all server-side logic and also handles its own content API via `handleRequest`.
+`games/hot-take/plugin.ts`:
 
 ```ts
-import { NextRequest, NextResponse } from "next/server";
-import type { GamePlugin, SessionPlayerInfo, AnswerContext } from "@/lib/games/types";
-import type { Session, Answer } from "@/lib/db/schema";
-import { db } from "@/lib/db";
-import { eq, desc } from "drizzle-orm";
-import { createClient } from "@/lib/supabase/server";
-import { hotTakes } from "./schema";
+import type { z } from "zod";
+import { defineGame, GameError } from "@/lib/game-sdk";
+import { CreateSchema, VoteSchema, type HotTakeContent, type HotTakeState } from "./schema";
 import { HotTakeBoard } from "./components/HotTakeBoard";
 import { HotTakeReveal } from "./components/HotTakeReveal";
 import BrowsePage from "./pages/BrowsePage";
 
-export const plugin: GamePlugin = {
+export const plugin = defineGame<HotTakeContent, HotTakeState>({
   gameType: "hot_take",
   displayName: "Hot Take",
   description: "Vote agree or disagree on a spicy statement — see where everyone stands",
-  browsePath: "/games/hot_take",
   minPlayers: 2,
   maxPlayers: 16,
-  supportsRandomize: false,
 
-  async getContentMeta(gameContentId) {
-    const [row] = await db
-      .select({ statement: hotTakes.statement })
-      .from(hotTakes)
-      .where(eq(hotTakes.id, gameContentId));
-    if (!row) throw new Error("Hot take not found");
-    return { title: row.statement };
+  async getLobbyMeta(ctx) {
+    return { subtitle: ctx.session.content.data.statement };
   },
 
-  async getLobbyMeta(session) {
-    const [row] = await db
-      .select({ statement: hotTakes.statement })
-      .from(hotTakes)
-      .where(eq(hotTakes.id, session.gameContentId!));
-    return { subtitle: row?.statement ?? "" };
+  async start(ctx) {
+    await ctx.state.init({ votes: {} });
   },
 
-  async start(session, players) {
-    const sorted = [...players].sort((a, b) => a.joinOrder - b.joinOrder);
-    const tokenOrder = sorted.map((p) => `vote_${p.playerId}`);
-    return { tokenOrder, firstPlayerId: sorted[0]?.playerId };
+  // Everything returned here is sent to the browser, so it says how many
+  // have voted — never which way.
+  async buildPlayProps(ctx) {
+    const votes = (await ctx.state.get())?.data.votes ?? {};
+    return { statement: ctx.session.content.data.statement, votedIds: Object.keys(votes) };
   },
 
-  async getAnswerHints() {
-    return { nextTokenLabel: "vote" };
-  },
-
-  async buildPlayProps(session) {
-    const [row] = await db
-      .select({ statement: hotTakes.statement })
-      .from(hotTakes)
-      .where(eq(hotTakes.id, session.gameContentId!));
-    if (!row) throw new Error("Hot take not found");
-
-    const tokenOrder = (session.tokenOrder ?? []) as string[];
-    const currentTokenId = tokenOrder[session.currentTokenIndex ?? 0];
-
+  async buildResult(ctx) {
+    const votes = (await ctx.state.get())?.data.votes ?? {};
     return {
-      statement: row.statement,
-      tokenOrder,
-      initialCurrentTokenId: currentTokenId,
-      initialCurrentPlayerId: session.currentPlayerId ?? session.hostId,
-      initialTokenIndex: session.currentTokenIndex ?? 0,
+      statement: ctx.session.content.data.statement,
+      results: ctx.session.players.map((p) => ({ player: p.username, vote: votes[p.id] ?? null })),
     };
   },
 
-  async buildResult(session, answers) {
-    const [row] = await db
-      .select({ statement: hotTakes.statement })
-      .from(hotTakes)
-      .where(eq(hotTakes.id, session.gameContentId!));
-
-    const votes = answers.map((a) => ({
-      player: (a as Answer & { username?: string | null }).username ?? "Unknown",
-      vote: a.value as "agree" | "disagree",
-    }));
-
-    return {
-      statement: row?.statement ?? "",
-      votes,
-      agreeCount: votes.filter((v) => v.vote === "agree").length,
-      disagreeCount: votes.filter((v) => v.vote === "disagree").length,
-    };
+  contentActions: {
+    list: {
+      method: "GET",
+      auth: "public",
+      handler: async (ctx) =>
+        (await ctx.content.list({ limit: 20 })).map((take) => ({ id: take.id, statement: take.data.statement })),
+    },
+    create: {
+      auth: "user",
+      input: CreateSchema,
+      handler: async (ctx, { statement }: z.infer<typeof CreateSchema>) => {
+        const take = await ctx.content.create({ title: statement, data: { statement } });
+        return { id: take.id };
+      },
+    },
   },
 
-  // Content API — routes /api/games/hot_take/... land here
-  async handleRequest(req, path) {
-    const [seg0] = path;
+  sessionActions: {
+    vote: {
+      access: "player",
+      input: VoteSchema,
+      handler: async (ctx, { vote }: z.infer<typeof VoteSchema>) => {
+        const stored = await ctx.state.get();
+        if (!stored) throw new GameError(500, "Game state missing");
+        const me = ctx.viewer!.id;
+        if (stored.data.votes[me]) throw new GameError(400, "You already voted");
 
-    if (req.method === "GET" && !seg0) {
-      const rows = await db
-        .select({ id: hotTakes.id, statement: hotTakes.statement, createdAt: hotTakes.createdAt })
-        .from(hotTakes)
-        .orderBy(desc(hotTakes.createdAt))
-        .limit(20);
-      return NextResponse.json(rows);
-    }
+        const votes = { ...stored.data.votes, [me]: vote };
+        await ctx.state.update({ votes }, { expectedVersion: stored.version });
+        await ctx.broadcast("voted", { votedIds: Object.keys(votes) });
 
-    if (req.method === "POST" && !seg0) {
-      const supabase = await createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-      const { statement } = await req.json();
-      if (!statement?.trim()) return NextResponse.json({ error: "Statement required" }, { status: 400 });
-
-      const [row] = await db
-        .insert(hotTakes)
-        .values({ authorId: user.id, statement: statement.trim() })
-        .returning();
-
-      return NextResponse.json({ id: row.id, statement: row.statement }, { status: 201 });
-    }
-
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+        if (Object.keys(votes).length >= ctx.session.players.length) {
+          await ctx.finish();
+          await ctx.notify("others", { title: "Hot Take", body: "Everyone has voted — see the split!" });
+        }
+        return { votedIds: Object.keys(votes) };
+      },
+    },
   },
 
   PlayComponent: HotTakeBoard,
   RevealComponent: HotTakeReveal,
   BrowsePage,
-};
+});
 ```
 
-### What each method does
+### Lifecycle hooks
 
-**`getContentMeta(gameContentId)`**
-Returns `{ title }` for a piece of game content. Used in the session creation UI and lobby. Throw if not found.
+| Hook | When | Notes |
+|---|---|---|
+| `start(ctx, { randomize })` | The host starts the game | Usually `ctx.state.init(...)`. May return `firstPlayerId`. |
+| `buildPlayProps(ctx)` | The play page renders | Sent to the browser for players **and spectators** — never include secrets. |
+| `buildResult(ctx)` | The reveal page renders | The game is over; secrets can come out. |
+| `getLobbyMeta(ctx)` | The lobby renders | Optional one-line subtitle. |
 
-**`getLobbyMeta(session)`**
-Returns `{ subtitle }` shown under the game name in the lobby. Optional method.
+### Actions
 
-**`start(session, players, randomize)`**
-Called when the host presses Start. Build and return `tokenOrder`. Return `firstPlayerId` to set who goes first.
+Your game's API is declared, not routed by hand. Before a handler runs, core has already:
 
-**`getAnswerHints(ctx)`**
-Called after each answer. Returns `{ nextTokenLabel }` for push notifications.
+- worked out who is calling (`ctx.viewer`, or `null`)
+- checked the action's `auth` or `access` level
+- for session actions: checked the session belongs to this game, that the caller may see it (private games are refused to non-players), and that it is in progress
+- validated the request against `input`
 
-**`buildPlayProps(session, players)`**
-Called server-side to render the play page. Always include `initialCurrentTokenId`, `initialCurrentPlayerId`, and `initialTokenIndex`.
+| | Levels | URL |
+|---|---|---|
+| `contentActions` | `auth: "public"` anyone · `"user"` signed in, guests included · `"account"` a signed-up account | `/api/games/<gameType>/content/<name>` |
+| `sessionActions` | `access: "player"` this session's players · `"viewer"` players, plus spectators of a public game | `/api/games/<gameType>/sessions/<code>/<name>` |
 
-**`buildResult(session, answers)`**
-Called server-side for the reveal page. `answers` rows include a joined `username` field.
+Use `auth: "account"` for anything costly or abusable — a guest account costs nothing to create.
 
-**`handleRequest(req, path)`**
-Handles all HTTP requests routed to `/api/games/hot_take/[...path]`. `path` is the segments after the game type (empty array for the root).
+Actions default to `POST`. Set `method: "GET"` for reads; input then comes from the query string, so use `z.coerce` for numbers. Player actions require the session to be in progress unless you set `when: "any"`.
+
+To refuse a request, `throw new GameError(status, message)`. Anything else a handler throws is logged and returned as a generic 500, so internals never reach the client.
+
+### The context
+
+| | |
+|---|---|
+| `ctx.viewer` | `{ id, username, isGuest }` or `null` |
+| `ctx.content` | `create`, `get`, `list`, `update`, `remove` — this game's rows only. `list` never returns someone else's private content; `update` and `remove` are author-only. |
+| `ctx.session` | Read-only: `shareCode`, `status`, `hostId`, `isPublic`, `currentPlayerId`, `players`, and `content` (the row being played) |
+| `ctx.role` | `"player"`, `"observer"`, or `null` |
+| `ctx.state` | `get()`, `init(data)`, `update(data, { expectedVersion })` |
+| `ctx.turn.set(playerId)` | Whose turn it is (must be one of this session's players) |
+| `ctx.finish()` | Ends the game and sends everyone to the reveal |
+| `ctx.broadcast(name, data)` | Realtime message to everyone with the session open |
+| `ctx.notify(to, { title, body })` | Push to this session's players; `"others"` is everyone but the caller. Core sets the link. |
+| `ctx.answers()` | Shared turn engine only: answers given so far |
+
+**Always pass `expectedVersion` from the state you read.** If another request changed the state in between, the update is refused with a 409 instead of silently overwriting — this is what stops a double-tapped button applying twice.
+
+### Games with one answer per turn
+
+If your game is "each player answers one prompt in turn" (as Pool Dooks and Guess the Number are), you can skip `state` and `sessionActions` and use the shared turn engine instead: return a `tokenOrder` from `start`, have the client call `submitAnswer(shareCode, tokenId, value)`, and read the answers with `ctx.answers()` in `buildResult`. Implement `getAnswerHints` to name the next prompt for the "your turn" push. Return `answered` from it **only** if answers are meant to be public during play.
 
 ---
 
-## 4. Write the Play component
+## 3. The play screen
 
 `games/hot-take/components/HotTakeBoard.tsx`:
 
 ```tsx
 "use client";
-import { useRouter } from "next/navigation";
-import { useSession } from "@/hooks/useSession";
-import { useGameState } from "@/hooks/useGameState";
-import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { gameAction, GameActionError, useGameSession } from "@/lib/game-sdk/client";
 
 interface HotTakeBoardProps {
+  // Passed to every PlayComponent by core:
   shareCode: string;
-  currentUserId: string;
+  currentUserId: string; // "" for someone watching a public game
   players: Array<{ playerId: string; username: string }>;
+  // From this game's buildPlayProps:
   statement: string;
-  tokenOrder: string[];
-  initialCurrentTokenId: string;
-  initialCurrentPlayerId: string;
-  initialTokenIndex: number;
+  votedIds: string[];
 }
 
-export function HotTakeBoard({
-  shareCode,
-  currentUserId,
-  players,
-  statement,
-  tokenOrder,
-  initialCurrentTokenId,
-  initialCurrentPlayerId,
-  initialTokenIndex,
-}: HotTakeBoardProps) {
-  const router = useRouter();
-  const [submitting, setSubmitting] = useState(false);
+export function HotTakeBoard({ shareCode, currentUserId, players, statement, votedIds: initial }: HotTakeBoardProps) {
+  const [votedIds, setVotedIds] = useState(initial);
+  const [busy, setBusy] = useState(false);
 
-  const { state, handleEvent } = useGameState(players, {
-    tokenOrder,
-    currentTokenId: initialCurrentTokenId,
-    currentPlayerId: initialCurrentPlayerId,
-    tokenIndex: initialTokenIndex,
+  // Live updates. The hook also sends everyone to the reveal when the game ends.
+  useGameSession(shareCode, {
+    onEvent: (name, data) => {
+      if (name === "voted") setVotedIds((data as { votedIds: string[] }).votedIds);
+    },
   });
 
-  useSession(shareCode, (event) => {
-    handleEvent(event);
-    if (event.type === "session:completed" || event.type === "session:revealed") {
-      router.push(`/sessions/${shareCode}/reveal`);
-    }
-  });
+  const isPlayer = players.some((p) => p.playerId === currentUserId);
+  const hasVoted = votedIds.includes(currentUserId);
 
-  const myTokenId = `vote_${currentUserId}`;
-  const hasVoted = state.answeredTokenIds.has(myTokenId);
-  const isMyTurn = state.currentPlayerId === currentUserId;
-  const votedCount = state.answeredTokenIds.size;
-  const currentPlayer = players.find((p) => p.playerId === state.currentPlayerId);
-
-  const submitVote = async (vote: "agree" | "disagree") => {
-    setSubmitting(true);
+  const vote = async (choice: "agree" | "disagree") => {
+    setBusy(true);
     try {
-      const res = await fetch(`/api/sessions/${shareCode}/answer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tokenId: state.currentTokenId, value: vote }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error();
-      if (data.isComplete) router.push(`/sessions/${shareCode}/reveal`);
-    } catch {
-      toast.error("Failed to submit vote");
+      const result = await gameAction<{ votedIds: string[] }>("hot_take", shareCode, "vote", { vote: choice });
+      setVotedIds(result.votedIds);
+    } catch (e) {
+      toast.error(e instanceof GameActionError ? e.message : "Something went wrong");
     } finally {
-      setSubmitting(false);
+      setBusy(false);
     }
   };
 
   return (
-    <div className="max-w-md mx-auto px-4 py-12 space-y-8">
-      <p className="text-xl font-semibold text-center leading-snug">{statement}</p>
-      <p className="text-sm text-center text-muted-foreground">
-        {votedCount} of {tokenOrder.length} voted
+    <div className="max-w-md mx-auto px-4 py-8 space-y-6 text-center">
+      <h1 className="text-xl font-bold">&ldquo;{statement}&rdquo;</h1>
+      <p className="text-sm text-muted-foreground">
+        {votedIds.length} of {players.length} voted
       </p>
-
-      {hasVoted ? (
-        <p className="text-center text-muted-foreground">Your vote is in. Waiting for others...</p>
-      ) : isMyTurn ? (
-        <div className="flex gap-3">
-          <Button className="flex-1" onClick={() => submitVote("agree")} disabled={submitting}>
+      {isPlayer && !hasVoted ? (
+        <div className="flex gap-2">
+          <Button className="flex-1" disabled={busy} onClick={() => vote("agree")}>
             Agree
           </Button>
-          <Button className="flex-1" variant="outline" onClick={() => submitVote("disagree")} disabled={submitting}>
+          <Button className="flex-1" variant="outline" disabled={busy} onClick={() => vote("disagree")}>
             Disagree
           </Button>
         </div>
       ) : (
-        <p className="text-center text-muted-foreground">
-          Waiting for <strong>{currentPlayer?.username ?? "..."}</strong> to vote...
-        </p>
+        <p className="text-sm text-muted-foreground">Waiting for the others…</p>
       )}
     </div>
   );
 }
 ```
 
-### Key patterns
-
-**`useGameState(players, initialOverride)`**
-Initializes client-side state from server-rendered props. Always pass the three `initial*` props.
-
-**`useSession(shareCode, onEvent)`**
-Subscribes to Supabase Realtime. Pass every event through `handleEvent` first, then handle navigation. Always redirect on `session:completed` or `session:revealed`.
-
-**`state.answeredTokenIds`**
-A `Set<string>` of answered token IDs. Use `.has(id)` and `.size`.
-
-**Submit shape**
-Always POST `{ tokenId: state.currentTokenId, value: string }` to `/api/sessions/${shareCode}/answer`.
+- Core passes `shareCode`, `currentUserId`, `hostId` and `players` to every play component, then spreads in your `buildPlayProps`.
+- **Spectators get the same component** with `currentUserId` set to `""`. Design the screen so a viewer who isn't a player simply sees a read-only view; core adds the "You're watching" banner.
+- `gameAction` rejects with a `GameActionError` carrying the server's message and status.
+- Start from the server-rendered props and update from `useGameSession` events. Don't keep anything the server didn't send.
 
 ---
 
-## 5. Write the Reveal component
+## 4. The reveal
 
 `games/hot-take/components/HotTakeReveal.tsx`:
 
 ```tsx
+"use client";
+
 interface HotTakeRevealProps {
   statement: string;
-  votes: Array<{ player: string; vote: "agree" | "disagree" }>;
-  agreeCount: number;
-  disagreeCount: number;
+  results: Array<{ player: string; vote: "agree" | "disagree" | null }>;
 }
 
-export function HotTakeReveal({ statement, votes, agreeCount, disagreeCount }: HotTakeRevealProps) {
-  const total = votes.length;
+export function HotTakeReveal({ statement, results }: HotTakeRevealProps) {
+  const agree = results.filter((r) => r.vote === "agree").length;
   return (
-    <div className="max-w-md mx-auto px-4 py-12 space-y-8">
-      <p className="text-xl font-semibold text-center">{statement}</p>
-
-      <div className="flex gap-4 text-center">
-        <div className="flex-1 border rounded-lg p-4">
-          <p className="text-3xl font-bold">{agreeCount}</p>
-          <p className="text-sm text-muted-foreground">Agree</p>
-          <p className="text-xs text-muted-foreground">{Math.round((agreeCount / total) * 100)}%</p>
-        </div>
-        <div className="flex-1 border rounded-lg p-4">
-          <p className="text-3xl font-bold">{disagreeCount}</p>
-          <p className="text-sm text-muted-foreground">Disagree</p>
-          <p className="text-xs text-muted-foreground">{Math.round((disagreeCount / total) * 100)}%</p>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        {votes.map((v, i) => (
-          <div key={i} className="flex items-center justify-between text-sm border rounded px-3 py-2">
-            <span>{v.player}</span>
-            <span className={v.vote === "agree" ? "text-green-600 font-medium" : "text-red-500 font-medium"}>
-              {v.vote}
-            </span>
-          </div>
+    <div className="space-y-4 text-center">
+      <h2 className="text-2xl font-bold">&ldquo;{statement}&rdquo;</h2>
+      <p className="font-semibold">
+        {agree} agree · {results.length - agree} disagree
+      </p>
+      <ul className="space-y-1 text-sm">
+        {results.map((r) => (
+          <li key={r.player}>
+            {r.player}: {r.vote ?? "no vote"}
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }
 ```
 
+It receives exactly what `buildResult` returns. Core adds the Home and Play Again buttons around it.
+
 ---
 
-## 6. Create the browse page
+## 5. The browse page
 
 `games/hot-take/pages/BrowsePage.tsx`:
 
 ```tsx
 "use client";
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { contentAction } from "@/lib/game-sdk/client";
+
+interface Take {
+  id: string;
+  statement: string;
+}
 
 export default function BrowsePage() {
   const router = useRouter();
+  const [takes, setTakes] = useState<Take[]>([]);
   const [statement, setStatement] = useState("");
-  const [recent, setRecent] = useState<Array<{ id: string; statement: string }>>([]);
-  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    fetch("/api/games/hot_take").then((r) => r.json()).then(setRecent).catch(() => {});
+    contentAction<Take[]>("hot_take", "list", undefined, "GET").then(setTakes).catch(() => {});
   }, []);
 
-  const handleCreate = async () => {
-    if (!statement.trim()) return;
-    setCreating(true);
+  // Core's session setup page takes it from here.
+  const play = (id: string) => router.push(`/sessions/new?gameType=hot_take&gameContentId=${id}`);
+
+  const create = async () => {
     try {
-      const res = await fetch("/api/games/hot_take", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ statement }),
-      });
-      if (!res.ok) throw new Error();
-      const { id } = await res.json();
-      router.push(`/sessions/new?gameType=hot_take&gameContentId=${id}`);
+      const { id } = await contentAction<{ id: string }>("hot_take", "create", { statement });
+      play(id);
     } catch {
-      toast.error("Failed to create");
-      setCreating(false);
+      toast.error("Couldn't create that one");
     }
   };
 
   return (
-    <div className="max-w-lg mx-auto px-4 py-8 space-y-6">
+    <div className="max-w-2xl mx-auto px-4 py-8 space-y-4">
       <h1 className="text-2xl font-bold">Hot Take</h1>
-      <Card>
-        <CardHeader><CardTitle className="text-base">Write a Hot Take</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <Textarea
-            placeholder="Pineapple belongs on pizza."
-            value={statement}
-            onChange={(e) => setStatement(e.target.value)}
-            rows={3}
-          />
-          <Button onClick={handleCreate} disabled={creating || !statement.trim()} className="w-full">
-            {creating ? "Creating..." : "Create & Start Session"}
+      <div className="flex gap-2">
+        <Input value={statement} onChange={(e) => setStatement(e.target.value)} placeholder="Pineapple belongs on pizza" />
+        <Button onClick={create} disabled={statement.trim().length < 5}>
+          Create
+        </Button>
+      </div>
+      {takes.map((take) => (
+        <div key={take.id} className="flex items-center justify-between border rounded-lg p-3">
+          <span className="text-sm">{take.statement}</span>
+          <Button size="sm" variant="outline" onClick={() => play(take.id)}>
+            Play
           </Button>
-        </CardContent>
-      </Card>
-
-      {recent.length > 0 && (
-        <div className="space-y-2">
-          {recent.map((r) => (
-            <Card key={r.id}>
-              <CardContent className="p-4 flex items-center justify-between gap-3">
-                <p className="text-sm">{r.statement}</p>
-                <Button size="sm" variant="outline"
-                  onClick={() => router.push(`/sessions/new?gameType=hot_take&gameContentId=${r.id}`)}>
-                  Play
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
         </div>
-      )}
+      ))}
     </div>
   );
 }
 ```
 
-> **API convention**: Call your game's own APIs at `/api/games/<gameType>/...` — this routes to your `handleRequest` method.
+Send the host to `/sessions/new?gameType=<gameType>&gameContentId=<id>`; core takes it from there (public/private, lobby, share code).
 
----
-
-## 7. Sync the registry
-
-```bash
-npm run games:sync
-```
-
-This scans `games/*/plugin.ts` (looking for `export const plugin`) and regenerates `lib/games/registry.ts`. The game appears on the home page automatically. `npm run dev` and `npm run build` run this automatically via `predev`/`prebuild`.
+A game can also export `CreatePage` (`/games/<gameType>/create`) and `LibraryPage` (`/games/<gameType>/library`).
 
 ---
 
 ## Checklist
 
-- [ ] `games/hot-take/schema.ts` — Drizzle table
-- [ ] SQL `CREATE TABLE` run in Supabase SQL Editor
-- [ ] `games/hot-take/plugin.ts` — implements all required `GamePlugin` methods + `handleRequest` + `BrowsePage`
-- [ ] `games/hot-take/components/HotTakeBoard.tsx`
-- [ ] `games/hot-take/components/HotTakeReveal.tsx`
-- [ ] `games/hot-take/pages/BrowsePage.tsx`
-- [ ] `npm run games:sync` (or just `npm run dev`)
-
-To remove a game: delete `games/hot-take/` and run `npm run games:sync`.
-
----
+- [ ] `gameType` is lowercase letters, digits and underscores, and never changes once games exist
+- [ ] `npm run games:sync` run and `lib/games/registry.ts` committed
+- [ ] `npm run lint` is clean — no restricted imports
+- [ ] Every action has the tightest `auth` / `access` that works, and an `input` schema
+- [ ] Nothing secret in `buildPlayProps`, in a `"viewer"` action, or in a broadcast — spectators receive all three
+- [ ] Every `state.update` passes the `expectedVersion` it read
+- [ ] The play screen works for a spectator (`currentUserId === ""`)
+- [ ] The PR touches only `games/<name>/`, the registry, and (if needed) `package.json` / `package-lock.json`
 
 ## Common mistakes
 
-**`buildPlayProps` missing initial state**
-If you don't return `initialCurrentTokenId`, `initialCurrentPlayerId`, and `initialTokenIndex`, the board will be blank until the next Realtime event fires.
-
-**Wrong `tokenId` in submit**
-Always send `tokenId: state.currentTokenId` — not a token ID you constructed yourself.
-
-**Answers table unique constraint**
-There's a unique constraint on `(sessionId, tokenId)`. Design your `tokenOrder` so IDs are unique per turn (e.g. prefix with player ID).
-
-**`buildResult` gets answers without usernames by default**
-The reveal route joins `profiles` for you — each `Answer` row has `username` available as `(answer as Answer & { username?: string | null }).username`.
-
-**Forgot to handle `session:revealed`**
-Both `session:completed` and `session:revealed` are broadcast. Handle both or players mid-load may miss the redirect.
-
-**`browsePath` must match `gameType` with underscores**
-Use `/games/hot_take` (underscore), not `/games/hot-take` (hyphen) — the dynamic route matches `gameType` exactly.
+- **Trusting the client.** Validate everything in the handler: whose turn it is, whether the move is legal, whether they've already acted. `access: "player"` tells you they are *a* player, not that it is *their* turn.
+- **Leaking through props.** `buildPlayProps` output is serialized into the page for everyone who can open it.
+- **Updating state without a version.** Read, then `update(..., { expectedVersion })` with the version you read.
+- **Broadcasting before saving.** Save first; if the save is refused, nothing should have been announced.
+- **Reaching into core.** If you want something the SDK doesn't have, that's a core PR — not a deep import.

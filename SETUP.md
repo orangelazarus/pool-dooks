@@ -44,7 +44,7 @@ For a **new, empty** database:
 npm run db:push
 ```
 
-This creates all tables in your Supabase Postgres database, including each game's own tables (`games/*/schema.ts`).
+This creates all tables in your Supabase Postgres database. Games have no tables of their own: they store everything in the generic `game_content` and `game_state` tables.
 
 Never run `db:push` against a database that already has data — the migration snapshot is stale and it can propose destructive changes. Later schema changes are hand-written, numbered SQL files in `drizzle/`, applied through the Supabase SQL Editor **before** the code that needs them is deployed.
 
@@ -55,7 +55,8 @@ Run these SQL policies in Supabase SQL Editor:
 ```sql
 -- Enable RLS on all tables
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE pool_dooks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE game_content ENABLE ROW LEVEL SECURITY;
+ALTER TABLE game_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session_players ENABLE ROW LEVEL SECURITY;
 ALTER TABLE answers ENABLE ROW LEVEL SECURITY;
@@ -66,11 +67,9 @@ CREATE POLICY "profiles_select" ON profiles FOR SELECT TO authenticated USING (t
 CREATE POLICY "profiles_insert" ON profiles FOR INSERT TO authenticated WITH CHECK (id = auth.uid());
 CREATE POLICY "profiles_update" ON profiles FOR UPDATE TO authenticated USING (id = auth.uid());
 
--- Mad libs: public ones readable by all, authors manage their own
-CREATE POLICY "pool_dooks_select" ON pool_dooks FOR SELECT USING (is_public = true OR author_id = auth.uid());
-CREATE POLICY "pool_dooks_insert" ON pool_dooks FOR INSERT TO authenticated WITH CHECK (author_id = auth.uid());
-CREATE POLICY "pool_dooks_update" ON pool_dooks FOR UPDATE TO authenticated USING (author_id = auth.uid());
-CREATE POLICY "pool_dooks_delete" ON pool_dooks FOR DELETE TO authenticated USING (author_id = auth.uid());
+-- Game storage (game_content, game_state): no policies on purpose. With RLS on
+-- and no policy, the REST API denies everyone; only the app server reaches
+-- these tables, through lib/game-sdk.
 
 -- Sessions: readable by all authenticated, only host updates
 CREATE POLICY "sessions_select" ON sessions FOR SELECT TO authenticated USING (true);
@@ -97,12 +96,9 @@ CREATE POLICY "service_role_bypass" ON answers FOR ALL TO service_role USING (tr
 CREATE POLICY "service_role_bypass_sessions" ON sessions FOR ALL TO service_role USING (true);
 ```
 
-Then lock down the game tables the same way, by running the RLS statements in:
-- `drizzle/0005_farkle_rls.sql` — `farkle_games`, `farkle_turns`
-- `drizzle/0006_number_games_rls.sql` — `number_games`
-- `drizzle/0007_chess.sql` (the `ALTER TABLE … ENABLE ROW LEVEL SECURITY` and `CREATE POLICY` lines at the end) — `chess_games`, `chess_states`
-
 Every table in the `public` schema is exposed through Supabase's REST API, so a table without RLS is readable and writable by anyone holding the anon key.
+
+The app's own database role needs to bypass RLS (`ALTER ROLE <app_role> BYPASSRLS`), or be the tables' owner, for the server to reach `game_content` and `game_state`.
 
 ## 6. Enable Realtime in Supabase
 
@@ -138,10 +134,10 @@ Add icons to `/public/icons/`:
 
 ```
 app/          Next.js App Router pages + API routes
-games/        One self-contained directory per game (pool-dooks, guess-the-number, farkle, chess)
+games/        One self-contained plugin per game (pool-dooks, guess-the-number, farkle, chess)
 components/   Shared React components (session, layout, ui)
 hooks/        Custom React hooks (useSession, useGameState, usePushNotifications)
-lib/          Core logic (db schema, game registry, session access, auth, push, realtime)
+lib/          Core logic (db schema, game SDK, game registry, session access, auth, push, realtime)
 drizzle/      Numbered SQL migrations
 scripts/      sync-games.mjs — generates the game registry
 public/       Static assets (manifest.json, sw.js, icons)

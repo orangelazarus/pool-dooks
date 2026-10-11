@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, sessions, answers, profiles } from "@/lib/db";
+import { db, sessions } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { getPlugin } from "@/lib/games/registry";
 
@@ -15,20 +15,7 @@ export async function GET(
     return NextResponse.json({ error: "Not yet complete" }, { status: 400 });
   }
 
-  const sessionAnswers = await db
-    .select({
-      tokenId: answers.tokenId,
-      value: answers.value,
-      playerId: answers.playerId,
-      username: profiles.username,
-    })
-    .from(answers)
-    .leftJoin(profiles, eq(answers.playerId, profiles.id))
-    .where(eq(answers.sessionId, session.id));
-
-  const plugin = getPlugin(session.gameType);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const result = await plugin.buildResult(session, sessionAnswers as any);
+  const result = await getPlugin(session.gameType).buildResult(session);
 
   return NextResponse.json(result);
 }

@@ -13,10 +13,6 @@ async function handle(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Unknown game type" }, { status: 404 });
   }
 
-  if (!plugin.handleRequest) {
-    return NextResponse.json({ error: "This game has no content API" }, { status: 404 });
-  }
-
   return plugin.handleRequest(req, path);
 }
 

@@ -33,15 +33,7 @@ export async function POST(
   if (players.length > plugin.maxPlayers) {
     return NextResponse.json({ error: `Maximum ${plugin.maxPlayers} players allowed` }, { status: 400 });
   }
-  const { tokenOrder, firstPlayerId } = await plugin.start(
-    session,
-    players.map((p) => ({
-      playerId: p.playerId!,
-      username: "",
-      joinOrder: p.joinOrder,
-    })),
-    session.randomizeOrder ?? false
-  );
+  const { tokenOrder, firstPlayerId } = await plugin.start(session, session.randomizeOrder ?? false);
 
   const resolvedFirstPlayerId = firstPlayerId ?? session.hostId;
 
