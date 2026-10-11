@@ -1,427 +1,255 @@
-import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { eq, and, desc } from "drizzle-orm";
-import type { GamePlugin, SessionPlayerInfo, AnswerContext } from "@/lib/games/types";
-import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
-import type { Session } from "@/lib/db/schema";
-import { getViewerRole } from "@/lib/sessions/access";
-import { createClient } from "@/lib/supabase/server";
-import { sendPushToUser, sendPushToUsers } from "@/lib/push/send";
-import { farkleGames, farkleTurns } from "./schema";
-import { scoreSelection, hasAnyScoringSubset, RULESETS, type Ruleset } from "./scoring";
+import type { z } from "zod";
+import { defineGame, GameError, type SessionContext } from "@/lib/game-sdk";
+import { CreateSchema, KeepSchema, type FarkleContent, type FarkleState, type FarkleStatePayload } from "./schema";
+import { scoreSelection, hasAnyScoringSubset, RULESETS } from "./scoring";
 import { FarkleBoard } from "./components/FarkleBoard";
 import { FarkleReveal } from "./components/FarkleReveal";
 import BrowsePage from "./pages/BrowsePage";
 
-const CreateSchema = z.object({
-  title: z.string().min(1).max(100).optional(),
-  targetScore: z.union([z.literal(2000), z.literal(3000), z.literal(5000)]),
-  ruleset: z.enum(["original", "kcd"]),
-});
+type Ctx = SessionContext<FarkleContent, FarkleState>;
 
-const KeepSchema = z.object({
-  diceIndices: z.array(z.number().int().min(0)).min(1),
-});
+const FRESH_TURN = { diceRolled: null, diceRemaining: 6, turnScore: 0, rollsThisTurn: 0 };
 
-async function getActivePlayers(sessionId: string) {
-  return db
-    .select({ playerId: sessionPlayers.playerId, joinOrder: sessionPlayers.joinOrder })
-    .from(sessionPlayers)
-    .where(and(eq(sessionPlayers.sessionId, sessionId), eq(sessionPlayers.isActive, true)))
-    .orderBy(sessionPlayers.joinOrder);
+/** The live turn, for the player whose turn it is. Core has already checked they're a player of a game in progress. */
+async function loadTurn(ctx: Ctx) {
+  if (ctx.session.currentPlayerId !== ctx.viewer!.id) throw new GameError(403, "Not your turn");
+  const stored = await ctx.state.get();
+  if (!stored) throw new GameError(500, "Turn state missing");
+  return { turn: stored.data, version: stored.version };
 }
 
-function findNextPlayerId(players: { playerId: string | null }[], currentUserId: string): string {
-  const idx = players.findIndex((p) => p.playerId === currentUserId);
-  const next = players[(idx + 1) % players.length];
-  return next.playerId!;
+function nextPlayerId(ctx: Ctx): string {
+  const { players } = ctx.session;
+  const idx = players.findIndex((p) => p.id === ctx.viewer!.id);
+  return players[(idx + 1) % players.length].id;
 }
 
-async function loadSessionAndTurn(shareCode: string) {
-  const [session] = await db.select().from(sessions).where(eq(sessions.shareCode, shareCode));
-  if (!session) return null;
-  const [turn] = await db.select().from(farkleTurns).where(eq(farkleTurns.sessionId, session.id));
-  return { session, turn };
+/** Hands the dice to the next player and lets them know. */
+async function passTurn(ctx: Ctx, nextId: string) {
+  await ctx.turn.set(nextId);
+  if (nextId !== ctx.viewer!.id) await ctx.notify(nextId, { title: "Your turn!", body: "The dice are yours." });
 }
 
-/** A private game's live state is for its players only; a public one is open to watch. */
-async function canView(session: Session) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  return (await getViewerRole(session, user?.id)) !== "denied";
-}
-
-async function handleRoot(req: NextRequest) {
-  if (req.method === "GET") {
-    const rows = await db
-      .select({
-        id: farkleGames.id,
-        title: farkleGames.title,
-        targetScore: farkleGames.targetScore,
-        ruleset: farkleGames.ruleset,
-        createdAt: farkleGames.createdAt,
-      })
-      .from(farkleGames)
-      .orderBy(desc(farkleGames.createdAt))
-      .limit(20);
-    return NextResponse.json(rows);
-  }
-
-  if (req.method === "POST") {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const body = await req.json();
-    const parsed = CreateSchema.safeParse(body);
-    if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-
-    const { targetScore, ruleset } = parsed.data;
-    const title = parsed.data.title?.trim() || `Farkle — ${RULESETS[ruleset].label} — First to ${targetScore}`;
-
-    const [game] = await db
-      .insert(farkleGames)
-      .values({ authorId: user.id, title, targetScore, ruleset })
-      .returning({ id: farkleGames.id, title: farkleGames.title });
-
-    return NextResponse.json(game, { status: 201 });
-  }
-
-  return NextResponse.json({ error: "Not found" }, { status: 404 });
-}
-
-async function handleRoll(shareCode: string) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const loaded = await loadSessionAndTurn(shareCode);
-  if (!loaded) return NextResponse.json({ error: "Session not found" }, { status: 404 });
-  const { session, turn } = loaded;
-  if (session.status !== "in_progress") return NextResponse.json({ error: "Session not in progress" }, { status: 400 });
-  if (session.currentPlayerId !== user.id) return NextResponse.json({ error: "Not your turn" }, { status: 403 });
-  if (!turn) return NextResponse.json({ error: "Turn state missing" }, { status: 500 });
-  if (turn.diceRolled) return NextResponse.json({ error: "Resolve your current roll first" }, { status: 400 });
-
-  const [game] = await db.select().from(farkleGames).where(eq(farkleGames.id, session.gameContentId!));
-  if (!game) return NextResponse.json({ error: "Farkle game not found" }, { status: 404 });
-  const ruleset = game.ruleset as Ruleset;
-
-  const rolled = Array.from({ length: turn.diceRemaining }, () => Math.floor(Math.random() * 6) + 1);
-  const farkled = !hasAnyScoringSubset(rolled, ruleset);
-  const channel = supabase.channel(`session:${shareCode}`);
-
-  if (farkled) {
-    const players = await getActivePlayers(session.id);
-    const nextId = findNextPlayerId(players, user.id);
-
-    await db
-      .update(farkleTurns)
-      .set({ diceRolled: null, diceRemaining: 6, turnScore: 0, rollsThisTurn: 0, updatedAt: new Date() })
-      .where(eq(farkleTurns.sessionId, session.id));
-    await db.update(sessions).set({ currentPlayerId: nextId }).where(eq(sessions.id, session.id));
-
-    const payload = {
-      currentPlayerId: nextId,
-      dice: null,
-      diceRemaining: 6,
-      turnScore: 0,
-      rollsThisTurn: 0,
-      scores: turn.scores,
-      farkled: true,
-      banked: false,
-      hotDice: false,
-    };
-
-    Promise.all([
-      channel.send({ type: "broadcast", event: "farkle:state", payload: { type: "farkle:state", payload } }),
-      nextId !== user.id
-        ? sendPushToUser(nextId, { title: "Your turn!", body: "The dice are yours.", url: `/${shareCode}/play` })
-        : Promise.resolve(),
-    ]).catch(() => {});
-
-    return NextResponse.json({ dice: rolled, farkled: true, turnScore: 0, diceRemaining: 6, currentPlayerId: nextId, scores: turn.scores });
-  }
-
-  const rollsThisTurn = turn.rollsThisTurn + 1;
-  await db
-    .update(farkleTurns)
-    .set({ diceRolled: rolled, rollsThisTurn, updatedAt: new Date() })
-    .where(eq(farkleTurns.sessionId, session.id));
-
-  const payload = {
-    currentPlayerId: user.id,
-    dice: rolled,
-    diceRemaining: turn.diceRemaining,
-    turnScore: turn.turnScore,
-    rollsThisTurn,
-    scores: turn.scores,
-    farkled: false,
-    banked: false,
-    hotDice: false,
-  };
-  channel.send({ type: "broadcast", event: "farkle:state", payload: { type: "farkle:state", payload } }).catch(() => {});
-
-  return NextResponse.json({ dice: rolled, farkled: false, turnScore: turn.turnScore, diceRemaining: turn.diceRemaining, currentPlayerId: user.id, scores: turn.scores });
-}
-
-async function handleKeep(req: NextRequest, shareCode: string) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const body = await req.json();
-  const parsed = KeepSchema.safeParse(body);
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-
-  const loaded = await loadSessionAndTurn(shareCode);
-  if (!loaded) return NextResponse.json({ error: "Session not found" }, { status: 404 });
-  const { session, turn } = loaded;
-  if (session.status !== "in_progress") return NextResponse.json({ error: "Session not in progress" }, { status: 400 });
-  if (session.currentPlayerId !== user.id) return NextResponse.json({ error: "Not your turn" }, { status: 403 });
-  if (!turn || !turn.diceRolled) return NextResponse.json({ error: "No roll to resolve" }, { status: 400 });
-
-  const { diceIndices } = parsed.data;
-  const dice = turn.diceRolled;
-  const uniqueIndices = new Set(diceIndices);
-  if (uniqueIndices.size !== diceIndices.length || diceIndices.some((i) => i >= dice.length)) {
-    return NextResponse.json({ error: "Invalid dice selection" }, { status: 400 });
-  }
-
-  const [game] = await db.select().from(farkleGames).where(eq(farkleGames.id, session.gameContentId!));
-  if (!game) return NextResponse.json({ error: "Farkle game not found" }, { status: 404 });
-  const ruleset = game.ruleset as Ruleset;
-
-  const selected = diceIndices.map((i) => dice[i]);
-  const result = scoreSelection(selected, ruleset);
-  if (!result.valid) return NextResponse.json({ error: "That's not a valid scoring selection" }, { status: 400 });
-
-  let diceRemaining = turn.diceRemaining - selected.length;
-  let hotDice = false;
-  if (diceRemaining === 0) {
-    diceRemaining = 6;
-    hotDice = true;
-  }
-  const turnScore = turn.turnScore + result.points;
-
-  await db
-    .update(farkleTurns)
-    .set({ diceRolled: null, diceRemaining, turnScore, updatedAt: new Date() })
-    .where(eq(farkleTurns.sessionId, session.id));
-
-  const payload = {
-    currentPlayerId: user.id,
-    dice: null,
-    diceRemaining,
-    turnScore,
-    rollsThisTurn: turn.rollsThisTurn,
-    scores: turn.scores,
-    farkled: false,
-    banked: false,
-    hotDice,
-  };
-  supabase.channel(`session:${shareCode}`).send({ type: "broadcast", event: "farkle:state", payload: { type: "farkle:state", payload } }).catch(() => {});
-
-  return NextResponse.json({ points: result.points, turnScore, diceRemaining, hotDice });
-}
-
-async function handleBank(shareCode: string) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const loaded = await loadSessionAndTurn(shareCode);
-  if (!loaded) return NextResponse.json({ error: "Session not found" }, { status: 404 });
-  const { session, turn } = loaded;
-  if (session.status !== "in_progress") return NextResponse.json({ error: "Session not in progress" }, { status: 400 });
-  if (session.currentPlayerId !== user.id) return NextResponse.json({ error: "Not your turn" }, { status: 403 });
-  if (!turn) return NextResponse.json({ error: "Turn state missing" }, { status: 500 });
-  if (turn.diceRolled) return NextResponse.json({ error: "Resolve your current roll first" }, { status: 400 });
-  if (turn.turnScore <= 0) return NextResponse.json({ error: "Nothing to bank yet" }, { status: 400 });
-
-  const [game] = await db.select().from(farkleGames).where(eq(farkleGames.id, session.gameContentId!));
-  if (!game) return NextResponse.json({ error: "Farkle game not found" }, { status: 404 });
-  const ruleset = game.ruleset as Ruleset;
-  const meta = RULESETS[ruleset];
-
-  const hasBankedBefore = (turn.scores[user.id] ?? 0) > 0;
-  if (!hasBankedBefore && turn.turnScore < meta.minEntryScore) {
-    return NextResponse.json(
-      { error: `You need at least ${meta.minEntryScore} points in a turn before you can bank for the first time` },
-      { status: 400 }
-    );
-  }
-
-  const bankedAmount = turn.turnScore;
-  const newTotal = (turn.scores[user.id] ?? 0) + bankedAmount;
-  const scores = { ...turn.scores, [user.id]: newTotal };
-  const won = newTotal >= game.targetScore;
-
-  await db
-    .update(farkleTurns)
-    .set({ diceRolled: null, diceRemaining: 6, turnScore: 0, rollsThisTurn: 0, scores, updatedAt: new Date() })
-    .where(eq(farkleTurns.sessionId, session.id));
-
-  if (won) {
-    const completedAt = new Date();
-    await db.update(sessions).set({ status: "completed", completedAt }).where(eq(sessions.id, session.id));
-
-    const players = await getActivePlayers(session.id);
-    const otherIds = players.map((p) => p.playerId).filter((id): id is string => !!id && id !== user.id);
-
-    Promise.all([
-      supabase.channel(`session:${shareCode}`).send({
-        type: "broadcast",
-        event: "session:completed",
-        payload: { type: "session:completed", payload: { completedAt: completedAt.toISOString() } },
-      }),
-      supabase.channel(`session:${shareCode}`).send({
-        type: "broadcast",
-        event: "session:revealed",
-        payload: { type: "session:revealed", payload: {} },
-      }),
-      sendPushToUsers(otherIds, {
-        title: "Farkle finished!",
-        body: "Someone reached the target — come see who won!",
-        url: `/${shareCode}/reveal`,
-      }),
-    ]).catch(() => {});
-
-    return NextResponse.json({ banked: bankedAmount, totalScore: newTotal, won: true, scores });
-  }
-
-  const players = await getActivePlayers(session.id);
-  const nextId = findNextPlayerId(players, user.id);
-  await db.update(sessions).set({ currentPlayerId: nextId }).where(eq(sessions.id, session.id));
-
-  const payload = {
-    currentPlayerId: nextId,
-    dice: null,
-    diceRemaining: 6,
-    turnScore: 0,
-    rollsThisTurn: 0,
-    scores,
-    farkled: false,
-    banked: true,
-    hotDice: false,
-    bankedAmount,
-  };
-
-  Promise.all([
-    supabase.channel(`session:${shareCode}`).send({ type: "broadcast", event: "farkle:state", payload: { type: "farkle:state", payload } }),
-    nextId !== user.id
-      ? sendPushToUser(nextId, { title: "Your turn!", body: "The dice are yours.", url: `/${shareCode}/play` })
-      : Promise.resolve(),
-  ]).catch(() => {});
-
-  return NextResponse.json({ banked: bankedAmount, totalScore: newTotal, won: false, scores, currentPlayerId: nextId });
-}
-
-async function handleState(shareCode: string) {
-  const loaded = await loadSessionAndTurn(shareCode);
-  if (!loaded) return NextResponse.json({ error: "Session not found" }, { status: 404 });
-  const { session, turn } = loaded;
-  if (!(await canView(session))) return NextResponse.json({ error: "This game is private" }, { status: 403 });
-  return NextResponse.json({
-    status: session.status,
-    currentPlayerId: session.currentPlayerId,
-    dice: turn?.diceRolled ?? null,
-    diceRemaining: turn?.diceRemaining ?? 6,
-    turnScore: turn?.turnScore ?? 0,
-    rollsThisTurn: turn?.rollsThisTurn ?? 0,
-    scores: turn?.scores ?? {},
-  });
-}
-
-export const plugin: GamePlugin = {
+export const plugin = defineGame<FarkleContent, FarkleState>({
   gameType: "farkle",
   displayName: "Farkle",
   description: "Roll six dice, bank your points before you bust — first to the target wins",
-  browsePath: "/games/farkle",
   minPlayers: 2,
   maxPlayers: 6,
-  supportsRandomize: false,
 
-  async getContentMeta(gameContentId: string) {
-    const [game] = await db.select({ title: farkleGames.title }).from(farkleGames).where(eq(farkleGames.id, gameContentId));
-    if (!game) throw new Error("Farkle game not found");
-    return { title: game.title };
+  async getLobbyMeta(ctx) {
+    const { targetScore, ruleset } = ctx.session.content.data;
+    return { subtitle: `First to ${targetScore} · ${RULESETS[ruleset].label}` };
   },
 
-  async getLobbyMeta(session) {
-    const [game] = await db.select().from(farkleGames).where(eq(farkleGames.id, session.gameContentId!));
-    if (!game) return { subtitle: "" };
-    return { subtitle: `First to ${game.targetScore} · ${RULESETS[game.ruleset as Ruleset].label}` };
+  async start(ctx) {
+    await ctx.state.init({ ...FRESH_TURN, scores: {} });
+    return { firstPlayerId: ctx.session.players[0]?.id };
   },
 
-  async start(session, players: SessionPlayerInfo[]) {
-    const sorted = [...players].sort((a, b) => a.joinOrder - b.joinOrder);
-    // Structurally required by the shared engine, functionally unused by
-    // Farkle — all real turn advancement happens in the roll/keep/bank
-    // handlers above, which write sessions.currentPlayerId directly.
-    const tokenOrder = sorted.map((p) => `turn_${p.playerId}`);
-    await db.insert(farkleTurns).values({ sessionId: session.id }).onConflictDoNothing();
-    return { tokenOrder, firstPlayerId: sorted[0]?.playerId };
-  },
-
-  async getAnswerHints(_ctx: AnswerContext) {
-    return {}; // the shared /api/sessions/[code]/answer route is never called for farkle
-  },
-
-  async buildPlayProps(session) {
-    const [game] = await db.select().from(farkleGames).where(eq(farkleGames.id, session.gameContentId!));
-    if (!game) throw new Error("Farkle game not found");
-    const [turn] = await db.select().from(farkleTurns).where(eq(farkleTurns.sessionId, session.id));
-
+  async buildPlayProps(ctx) {
+    const turn = (await ctx.state.get())?.data;
+    const { title, data } = ctx.session.content;
     return {
-      title: game.title,
-      targetScore: game.targetScore,
-      ruleset: game.ruleset as Ruleset,
-      initialCurrentPlayerId: session.currentPlayerId ?? session.hostId,
-      initialDice: (turn?.diceRolled ?? null) as number[] | null,
+      title,
+      targetScore: data.targetScore,
+      ruleset: data.ruleset,
+      initialCurrentPlayerId: ctx.session.currentPlayerId ?? ctx.session.hostId,
+      initialDice: turn?.diceRolled ?? null,
       initialDiceRemaining: turn?.diceRemaining ?? 6,
       initialTurnScore: turn?.turnScore ?? 0,
       initialRollsThisTurn: turn?.rollsThisTurn ?? 0,
-      initialScores: (turn?.scores ?? {}) as Record<string, number>,
+      initialScores: turn?.scores ?? {},
     };
   },
 
-  async buildResult(session, _answers) {
-    const [game] = await db.select().from(farkleGames).where(eq(farkleGames.id, session.gameContentId!));
-    const [turn] = await db.select().from(farkleTurns).where(eq(farkleTurns.sessionId, session.id));
-    const rows = await db
-      .select({ playerId: sessionPlayers.playerId, username: profiles.username })
-      .from(sessionPlayers)
-      .leftJoin(profiles, eq(sessionPlayers.playerId, profiles.id))
-      .where(eq(sessionPlayers.sessionId, session.id))
-      .orderBy(sessionPlayers.joinOrder);
-
-    const scores = (turn?.scores ?? {}) as Record<string, number>;
-    const standings = rows
-      .map((r) => ({ playerId: r.playerId!, player: r.username ?? "Unknown", score: scores[r.playerId!] ?? 0 }))
+  async buildResult(ctx) {
+    const scores = (await ctx.state.get())?.data.scores ?? {};
+    const standings = ctx.session.players
+      .map((p) => ({ playerId: p.id, player: p.username, score: scores[p.id] ?? 0 }))
       .sort((a, b) => b.score - a.score);
-
-    return {
-      title: game?.title ?? "Farkle",
-      ruleset: (game?.ruleset ?? "original") as Ruleset,
-      targetScore: game?.targetScore ?? 3000,
-      standings,
-    };
+    const { title, data } = ctx.session.content;
+    return { title, ruleset: data.ruleset, targetScore: data.targetScore, standings };
   },
 
-  async handleRequest(req: NextRequest, path: string[]) {
-    const [seg0, seg1] = path;
-    if (!seg0) return handleRoot(req);
+  contentActions: {
+    list: {
+      method: "GET",
+      auth: "public",
+      handler: async (ctx) =>
+        (await ctx.content.list({ limit: 20 })).map((game) => ({
+          id: game.id,
+          title: game.title,
+          targetScore: game.data.targetScore,
+          ruleset: game.data.ruleset,
+          createdAt: game.createdAt,
+        })),
+    },
 
-    if (req.method === "POST" && seg1 === "roll") return handleRoll(seg0);
-    if (req.method === "POST" && seg1 === "keep") return handleKeep(req, seg0);
-    if (req.method === "POST" && seg1 === "bank") return handleBank(seg0);
-    if (req.method === "GET" && seg1 === "state") return handleState(seg0);
+    create: {
+      auth: "user",
+      input: CreateSchema,
+      handler: async (ctx, input: z.infer<typeof CreateSchema>) => {
+        const { targetScore, ruleset } = input;
+        const game = await ctx.content.create({
+          title: input.title?.trim() || `Farkle — ${RULESETS[ruleset].label} — First to ${targetScore}`,
+          data: { targetScore, ruleset },
+        });
+        return { id: game.id, title: game.title };
+      },
+    },
+  },
 
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  sessionActions: {
+    roll: {
+      access: "player",
+      handler: async (ctx) => {
+        const { turn, version } = await loadTurn(ctx);
+        if (turn.diceRolled) throw new GameError(400, "Resolve your current roll first");
+
+        const { ruleset } = ctx.session.content.data;
+        const rolled = Array.from({ length: turn.diceRemaining }, () => Math.floor(Math.random() * 6) + 1);
+
+        if (!hasAnyScoringSubset(rolled, ruleset)) {
+          // Bust: the turn's points are gone and the dice move on.
+          const nextId = nextPlayerId(ctx);
+          await ctx.state.update({ ...FRESH_TURN, scores: turn.scores }, { expectedVersion: version });
+          await passTurn(ctx, nextId);
+          const payload: FarkleStatePayload = {
+            currentPlayerId: nextId,
+            dice: null,
+            ...{ diceRemaining: 6, turnScore: 0, rollsThisTurn: 0 },
+            scores: turn.scores,
+            farkled: true,
+            banked: false,
+            hotDice: false,
+          };
+          await ctx.broadcast("state", payload);
+          // The roller alone gets the dice that busted them.
+          return { ...payload, dice: rolled };
+        }
+
+        const rollsThisTurn = turn.rollsThisTurn + 1;
+        await ctx.state.update({ ...turn, diceRolled: rolled, rollsThisTurn }, { expectedVersion: version });
+        const payload: FarkleStatePayload = {
+          currentPlayerId: ctx.viewer!.id,
+          dice: rolled,
+          diceRemaining: turn.diceRemaining,
+          turnScore: turn.turnScore,
+          rollsThisTurn,
+          scores: turn.scores,
+          farkled: false,
+          banked: false,
+          hotDice: false,
+        };
+        await ctx.broadcast("state", payload);
+        return payload;
+      },
+    },
+
+    keep: {
+      access: "player",
+      input: KeepSchema,
+      handler: async (ctx, { diceIndices }: z.infer<typeof KeepSchema>) => {
+        const { turn, version } = await loadTurn(ctx);
+        const dice = turn.diceRolled;
+        if (!dice) throw new GameError(400, "No roll to resolve");
+        if (new Set(diceIndices).size !== diceIndices.length || diceIndices.some((i) => i >= dice.length)) {
+          throw new GameError(400, "Invalid dice selection");
+        }
+
+        const selected = diceIndices.map((i) => dice[i]);
+        const result = scoreSelection(selected, ctx.session.content.data.ruleset);
+        if (!result.valid) throw new GameError(400, "That's not a valid scoring selection");
+
+        // Setting aside all six ("hot dice") puts all six back in play.
+        const left = turn.diceRemaining - selected.length;
+        const hotDice = left === 0;
+        const diceRemaining = hotDice ? 6 : left;
+        const turnScore = turn.turnScore + result.points;
+
+        await ctx.state.update({ ...turn, diceRolled: null, diceRemaining, turnScore }, { expectedVersion: version });
+        const payload: FarkleStatePayload = {
+          currentPlayerId: ctx.viewer!.id,
+          dice: null,
+          diceRemaining,
+          turnScore,
+          rollsThisTurn: turn.rollsThisTurn,
+          scores: turn.scores,
+          farkled: false,
+          banked: false,
+          hotDice,
+        };
+        await ctx.broadcast("state", payload);
+        return { ...payload, points: result.points };
+      },
+    },
+
+    bank: {
+      access: "player",
+      handler: async (ctx) => {
+        const { turn, version } = await loadTurn(ctx);
+        if (turn.diceRolled) throw new GameError(400, "Resolve your current roll first");
+        if (turn.turnScore <= 0) throw new GameError(400, "Nothing to bank yet");
+
+        const me = ctx.viewer!.id;
+        const { targetScore, ruleset } = ctx.session.content.data;
+        const { minEntryScore } = RULESETS[ruleset];
+        const hasBankedBefore = (turn.scores[me] ?? 0) > 0;
+        if (!hasBankedBefore && turn.turnScore < minEntryScore) {
+          throw new GameError(400, `You need at least ${minEntryScore} points in a turn before you can bank for the first time`);
+        }
+
+        const bankedAmount = turn.turnScore;
+        const totalScore = (turn.scores[me] ?? 0) + bankedAmount;
+        const scores = { ...turn.scores, [me]: totalScore };
+        await ctx.state.update({ ...FRESH_TURN, scores }, { expectedVersion: version });
+
+        if (totalScore >= targetScore) {
+          await ctx.finish();
+          await ctx.notify("others", { title: "Farkle finished!", body: "Someone reached the target — come see who won!" });
+          return { banked: bankedAmount, totalScore, won: true, scores };
+        }
+
+        const nextId = nextPlayerId(ctx);
+        await passTurn(ctx, nextId);
+        const payload: FarkleStatePayload = {
+          currentPlayerId: nextId,
+          dice: null,
+          diceRemaining: 6,
+          turnScore: 0,
+          rollsThisTurn: 0,
+          scores,
+          farkled: false,
+          banked: true,
+          hotDice: false,
+          bankedAmount,
+        };
+        await ctx.broadcast("state", payload);
+        return { banked: bankedAmount, totalScore, won: false, scores, currentPlayerId: nextId };
+      },
+    },
+
+    /** The current turn — for a browser catching up. */
+    state: {
+      method: "GET",
+      access: "viewer",
+      handler: async (ctx) => {
+        const turn = (await ctx.state.get())?.data;
+        return {
+          status: ctx.session.status,
+          currentPlayerId: ctx.session.currentPlayerId,
+          dice: turn?.diceRolled ?? null,
+          diceRemaining: turn?.diceRemaining ?? 6,
+          turnScore: turn?.turnScore ?? 0,
+          rollsThisTurn: turn?.rollsThisTurn ?? 0,
+          scores: turn?.scores ?? {},
+        };
+      },
+    },
   },
 
   PlayComponent: FarkleBoard,
   RevealComponent: FarkleReveal,
   BrowsePage,
-};
+});

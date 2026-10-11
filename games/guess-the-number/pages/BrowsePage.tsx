@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Gamepad2, Hash } from "lucide-react";
 import { toast } from "sonner";
+import { contentAction } from "@/lib/game-sdk/client";
 
 interface NumberGame {
   id: string;
@@ -23,8 +24,7 @@ export default function BrowsePage() {
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    fetch("/api/games/guess_the_number")
-      .then((r) => r.json())
+    contentAction<NumberGame[]>("guess_the_number", "list", undefined, "GET")
       .then(setGames)
       .catch(() => {});
   }, []);
@@ -38,13 +38,7 @@ export default function BrowsePage() {
     }
     setCreating(true);
     try {
-      const res = await fetch("/api/games/guess_the_number", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ min: minNum, max: maxNum }),
-      });
-      if (!res.ok) throw new Error();
-      const { id } = await res.json();
+      const { id } = await contentAction<{ id: string }>("guess_the_number", "create", { min: minNum, max: maxNum });
       router.push(`/sessions/new?gameType=guess_the_number&gameContentId=${id}`);
     } catch {
       toast.error("Failed to create game");

@@ -8,17 +8,20 @@ import { Gamepad2, Sparkles, Zap } from "lucide-react";
 import type { PoolDookToken } from "../schema";
 import { cn } from "@/lib/utils";
 
+/** A story as the list action returns it. */
+export interface PoolDookSummary {
+  id: string;
+  title: string;
+  theme: string;
+  tokens: unknown;
+  aiGenerated?: boolean | null;
+  extraWeird?: boolean | null;
+  createdAt?: string | Date | null;
+  author?: { username: string | null } | null;
+}
+
 interface PoolDookCardProps {
-  poolDook: {
-    id: string;
-    title: string;
-    theme: string;
-    tokens: unknown;
-    aiGenerated?: boolean | null;
-    extraWeird?: boolean | null;
-    createdAt?: Date | null;
-    author?: { username: string | null } | null;
-  };
+  poolDook: PoolDookSummary;
   showActions?: boolean;
   onDelete?: (id: string) => void;
 }

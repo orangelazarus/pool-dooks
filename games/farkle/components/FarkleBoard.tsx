@@ -2,14 +2,14 @@
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { useSession } from "@/hooks/useSession";
-import { useGameState } from "@/hooks/useGameState";
+import { gameAction, useGameSession, useGameState } from "@/lib/game-sdk/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
 import { Dice1, Dice2, Dice3, Dice4, Dice5, Dice6 } from "lucide-react";
 import { scoreSelection, RULESETS, type Ruleset } from "../scoring";
+import type { FarkleStatePayload } from "../schema";
 
 const DICE_ICONS = [Dice1, Dice2, Dice3, Dice4, Dice5, Dice6];
 
@@ -82,30 +82,28 @@ export function FarkleBoard({
     tokenIndex: 0,
   });
 
-  useSession(shareCode, (event) => {
-    handleEvent(event);
-    if (event.type === "farkle:state") {
+  // The SDK hook also takes everyone to the reveal when the game ends.
+  useGameSession(shareCode, {
+    onSessionEvent: handleEvent,
+    onEvent: (name, data) => {
+      if (name !== "state") return;
       // Another client's action — reflect it live for every open browser,
       // not just the player taking the turn.
+      const next = data as FarkleStatePayload;
       setTurn({
-        currentPlayerId: event.payload.currentPlayerId,
-        dice: event.payload.dice,
-        diceRemaining: event.payload.diceRemaining,
-        turnScore: event.payload.turnScore,
-        rollsThisTurn: event.payload.rollsThisTurn,
-        scores: event.payload.scores,
+        currentPlayerId: next.currentPlayerId,
+        dice: next.dice,
+        diceRemaining: next.diceRemaining,
+        turnScore: next.turnScore,
+        rollsThisTurn: next.rollsThisTurn,
+        scores: next.scores,
       });
       setSelected(new Set());
       setRollKey((k) => k + 1);
-      if (event.payload.farkled) toast.error("Farkle! Turn lost.");
-      if (event.payload.hotDice) toast.success("Hot dice! All six back in play.");
-      if (event.payload.banked && event.payload.bankedAmount) {
-        toast.success(`Banked ${event.payload.bankedAmount} points!`);
-      }
-    }
-    if (event.type === "session:completed" || event.type === "session:revealed") {
-      router.push(`/sessions/${shareCode}/reveal`);
-    }
+      if (next.farkled) toast.error("Farkle! Turn lost.");
+      if (next.hotDice) toast.success("Hot dice! All six back in play.");
+      if (next.banked && next.bankedAmount) toast.success(`Banked ${next.bankedAmount} points!`);
+    },
   });
 
   const isMyTurn = turn.currentPlayerId === currentUserId;
@@ -131,14 +129,8 @@ export function FarkleBoard({
   async function call(action: "roll" | "keep" | "bank", body?: unknown) {
     setBusy(true);
     try {
-      const res = await fetch(`/api/games/farkle/${shareCode}/${action}`, {
-        method: "POST",
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Something went wrong");
-      return data;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return await gameAction<any>("farkle", shareCode, action, body);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Something went wrong");
       return null;

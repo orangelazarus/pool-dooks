@@ -1,8 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "@/hooks/useSession";
-import { useGameState } from "@/hooks/useGameState";
+import { GameActionError, submitAnswer, useGameSession, useGameState } from "@/lib/game-sdk/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -12,7 +11,7 @@ import { TOKEN_COLORS } from "./BlankNode";
 import { toast } from "sonner";
 import { Send, Clock } from "lucide-react";
 import type { PoolDookToken } from "../schema";
-import { describeAnswer } from "@/lib/sessions/answer-announcement";
+import { describeAnswer } from "../announce";
 
 const HINTS: Array<{ types: string[]; check: (v: string) => boolean; message: string }> = [
   {
@@ -87,7 +86,8 @@ export function GameBoard({
   // playing, so the words are shown to everyone as they come in.
   const [given, setGiven] = useState<Record<string, GivenAnswer>>(initialAnswers ?? {});
 
-  useSession(shareCode, (event) => {
+  // The SDK hook also takes everyone to the reveal when the game ends.
+  useGameSession(shareCode, { onSessionEvent: (event) => {
     handleEvent(event);
     if (event.type === "turn:changed") {
       setGameState((prev) => ({
@@ -109,10 +109,7 @@ export function GameBoard({
         if (playerId !== currentUserId) toast(describeAnswer(announced));
       }
     }
-    if (event.type === "session:completed" || event.type === "session:revealed") {
-      router.push(`/sessions/${shareCode}/reveal`);
-    }
-  });
+  } });
 
   const isMyTurn = gameState.currentPlayerId === currentUserId;
   const currentToken = tokenMap.get(gameState.currentTokenId);
@@ -126,19 +123,12 @@ export function GameBoard({
     if (!answer.trim() || !isMyTurn) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/sessions/${shareCode}/answer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tokenId: gameState.currentTokenId, value: answer.trim() }),
-      });
-      let data: { ok?: boolean; isComplete?: boolean; error?: string } = {};
-      try { data = await res.json(); } catch { /* empty body */ }
-      if (!res.ok) throw new Error(data.error ?? `Server error ${res.status}`);
+      const data = await submitAnswer(shareCode, gameState.currentTokenId, answer.trim());
       if (data.isComplete) {
         router.push(`/sessions/${shareCode}/reveal`);
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to submit");
+      toast.error(e instanceof GameActionError ? e.message : "Failed to submit");
     } finally {
       setSubmitting(false);
     }
