@@ -1,41 +1,50 @@
-import { pgTable, uuid, text, integer, jsonb, timestamp } from "drizzle-orm/pg-core";
-import { profiles, sessions } from "@/lib/db/schema";
+// Shapes of what Chess keeps in core's game storage. Validated here, in code —
+// Chess owns no database tables.
+import { z } from "zod";
+import { TIME_CONTROLS } from "./clock";
 import type { GameResult, HostColor, ResultReason } from "./engine";
 
-// Content row referenced by sessions.gameContentId — the settings the host
-// picked at creation time.
-export const chessGames = pgTable("chess_games", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  authorId: uuid("author_id").references(() => profiles.id, { onDelete: "set null" }),
-  title: text("title").notNull(),
-  // "white" | "black" | "random" — validated at the Zod layer in plugin.ts,
-  // plain text column matches this codebase's no-Postgres-enum convention.
-  hostColor: text("host_color").$type<HostColor>().notNull().default("white"),
-  // Seconds per side; null means untimed.
-  timeControlSeconds: integer("time_control_seconds"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
-export type ChessGame = typeof chessGames.$inferSelect;
+const TIME_CONTROL_SECONDS = TIME_CONTROLS.map((t) => t.seconds);
 
-// One row per session: the live, mutable game state. Like farkle_turns, this
-// bypasses the shared tokenOrder/answers turn engine entirely.
-export const chessStates = pgTable("chess_states", {
-  sessionId: uuid("session_id")
-    .primaryKey()
-    .references(() => sessions.id, { onDelete: "cascade" }),
-  whitePlayerId: uuid("white_player_id").notNull().references(() => profiles.id),
-  blackPlayerId: uuid("black_player_id").notNull().references(() => profiles.id),
-  // Current position. Derivable from `moves`, but kept as the optimistic
-  // concurrency guard for move writes.
-  fen: text("fen").notNull(),
-  // SAN move list — the source of truth the game is replayed from.
-  moves: jsonb("moves").$type<string[]>().notNull().default([]),
-  whiteMs: integer("white_ms"),
-  blackMs: integer("black_ms"),
-  turnStartedAt: timestamp("turn_started_at", { withTimezone: true }),
-  drawOfferedBy: uuid("draw_offered_by").references(() => profiles.id),
-  result: text("result").$type<GameResult>(),
-  resultReason: text("result_reason").$type<ResultReason>(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+/** Content row: the settings the host picked at creation time. */
+export interface ChessContent {
+  hostColor: HostColor;
+  /** Seconds per side; null means untimed. */
+  timeControlSeconds: number | null;
+}
+
+/** Session state: the live game. */
+export interface ChessState {
+  whitePlayerId: string;
+  blackPlayerId: string;
+  /** SAN move list — the source of truth the position is replayed from. */
+  moves: string[];
+  whiteMs: number | null;
+  blackMs: number | null;
+  /** Epoch ms when the side to move's clock started; null while untimed or before White's first move. */
+  turnStartedAt: number | null;
+  drawOfferedBy: string | null;
+  result: GameResult | null;
+  resultReason: ResultReason | null;
+}
+
+export const CreateSchema = z.object({
+  title: z.string().min(1).max(100).optional(),
+  hostColor: z.enum(["white", "black", "random"]),
+  timeControlSeconds: z
+    .number()
+    .int()
+    .nullable()
+    .refine((s) => TIME_CONTROL_SECONDS.includes(s), "Unsupported time control"),
 });
-export type ChessState = typeof chessStates.$inferSelect;
+
+const SQUARE = z.string().regex(/^[a-h][1-8]$/);
+export const MoveSchema = z.object({
+  from: SQUARE,
+  to: SQUARE,
+  promotion: z.enum(["q", "r", "b", "n"]).optional(),
+});
+
+export const DrawSchema = z.object({
+  action: z.enum(["offer", "accept", "decline"]),
+});

@@ -1,20 +1,18 @@
-import {
-  pgTable,
-  uuid,
-  text,
-  integer,
-  timestamp,
-} from "drizzle-orm/pg-core";
-import { profiles } from "@/lib/db/schema";
+// Shapes of what Guess the Number keeps in core's game storage. Validated
+// here, in code — the game owns no database tables.
+import { z } from "zod";
 
-export const numberGames = pgTable("number_games", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  authorId: uuid("author_id").references(() => profiles.id, { onDelete: "set null" }),
-  title: text("title").notNull(),
-  minNumber: integer("min_number").notNull().default(1),
-  maxNumber: integer("max_number").notNull().default(100),
-  secretNumber: integer("secret_number").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+/** Content row: the range, and the number everyone is trying to guess. */
+export interface NumberGameContent {
+  minNumber: number;
+  maxNumber: number;
+  // Server-side only until the reveal: never put this in a list response or
+  // in the play props.
+  secretNumber: number;
+}
+
+export const CreateSchema = z.object({
+  title: z.string().min(1).max(100).optional(),
+  min: z.number().int().min(0).max(999999).optional().default(1),
+  max: z.number().int().min(1).max(1000000).optional().default(100),
 });
-
-export type NumberGame = typeof numberGames.$inferSelect;

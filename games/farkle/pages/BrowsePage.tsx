@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dices, Gamepad2 } from "lucide-react";
 import { toast } from "sonner";
+import { contentAction } from "@/lib/game-sdk/client";
 import { RULESETS, type Ruleset } from "../scoring";
 
 interface FarkleGame {
@@ -28,8 +29,7 @@ export default function BrowsePage() {
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    fetch("/api/games/farkle")
-      .then((r) => r.json())
+    contentAction<FarkleGame[]>("farkle", "list", undefined, "GET")
       .then(setGames)
       .catch(() => {});
   }, []);
@@ -37,13 +37,11 @@ export default function BrowsePage() {
   const handleCreate = async () => {
     setCreating(true);
     try {
-      const res = await fetch("/api/games/farkle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: title.trim() || undefined, targetScore, ruleset }),
+      const data = await contentAction<{ id: string }>("farkle", "create", {
+        title: title.trim() || undefined,
+        targetScore,
+        ruleset,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ? JSON.stringify(data.error) : "Failed to create game");
       router.push(`/sessions/new?gameType=farkle&gameContentId=${data.id}`);
     } catch {
       toast.error("Failed to create game");

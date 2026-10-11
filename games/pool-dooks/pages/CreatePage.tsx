@@ -18,8 +18,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { THEMES } from "../schema";
 import { toast } from "sonner";
+import { contentAction } from "@/lib/game-sdk/client";
 import { Sparkles, Upload, Save, Zap } from "lucide-react";
 import { ImportDialog } from "../components/ImportDialog";
+
+interface StoryDraft {
+  title: string;
+  bodyJson: JSONContent;
+}
 
 const THEME_LABELS: Record<string, string> = {
   everyday_life: "Everyday Life",
@@ -49,13 +55,17 @@ export default function CreatePage() {
 
   useEffect(() => {
     if (!editId) return;
-    fetch(`/api/games/pool_dooks/${editId}`)
-      .then((r) => r.json())
+    contentAction<{ title: string; theme: string; isPublic: boolean; bodyJson: JSONContent }>(
+      "pool_dooks",
+      "get",
+      { id: editId },
+      "GET"
+    )
       .then((data) => {
         setTitle(data.title);
         setTheme(data.theme);
         setIsPublic(data.isPublic);
-        setContent(data.bodyJson as JSONContent);
+        setContent(data.bodyJson);
       })
       .catch(() => toast.error("Failed to load pool dook"));
   }, [editId]);
@@ -68,13 +78,7 @@ export default function CreatePage() {
 
     setGenerating(true);
     try {
-      const res = await fetch("/api/games/pool_dooks/ai/enhance-text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: plainText }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Enhancement failed");
+      const data = await contentAction<StoryDraft>("pool_dooks", "enhance", { text: plainText });
       if (!title && data.title) setTitle(data.title);
       setContent(data.bodyJson);
       toast.success("Blanks added! Review and edit as needed.");
@@ -91,15 +95,13 @@ export default function CreatePage() {
     if (!theme) { toast.error("Select a theme first"); return; }
     setGenerating(true);
     try {
-      const res = await fetch("/api/games/pool_dooks/ai/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ theme, extraWeird, title: title || undefined }),
+      const data = await contentAction<StoryDraft>("pool_dooks", "generate", {
+        theme,
+        extraWeird,
+        title: title || undefined,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Generation failed");
       setTitle(data.title);
-      setContent(data.bodyJson as JSONContent);
+      setContent(data.bodyJson);
       toast.success("Mad lib generated! Review and edit as needed.");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Generation failed";
@@ -115,14 +117,9 @@ export default function CreatePage() {
     if (!content) { toast.error("Add some content"); return; }
     setSaving(true);
     try {
-      const url = isEdit ? `/api/games/pool_dooks/${editId}` : "/api/games/pool_dooks";
-      const method = isEdit ? "PUT" : "POST";
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, theme, bodyJson: content, isPublic }),
-      });
-      if (!res.ok) throw new Error("Save failed");
+      const story = { title, theme, bodyJson: content, isPublic };
+      if (isEdit) await contentAction("pool_dooks", "update", { id: editId, ...story }, "PUT");
+      else await contentAction("pool_dooks", "create", story);
       toast.success(isEdit ? "Mad lib updated!" : "Mad lib created!");
       router.push("/games/pool_dooks/library");
     } catch {

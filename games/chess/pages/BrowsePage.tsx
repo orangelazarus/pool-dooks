@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Crown, Gamepad2 } from "lucide-react";
 import { toast } from "sonner";
+import { contentAction } from "@/lib/game-sdk/client";
 import { TIME_CONTROLS, timeControlLabel } from "../clock";
 import type { HostColor } from "../engine";
 
@@ -37,8 +38,7 @@ export default function BrowsePage() {
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    fetch("/api/games/chess")
-      .then((r) => r.json())
+    contentAction<ChessGame[]>("chess", "list", undefined, "GET")
       .then(setGames)
       .catch(() => {});
   }, []);
@@ -46,13 +46,11 @@ export default function BrowsePage() {
   const handleCreate = async () => {
     setCreating(true);
     try {
-      const res = await fetch("/api/games/chess", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: title.trim() || undefined, hostColor, timeControlSeconds }),
+      const data = await contentAction<{ id: string }>("chess", "create", {
+        title: title.trim() || undefined,
+        hostColor,
+        timeControlSeconds,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ? JSON.stringify(data.error) : "Failed to create game");
       router.push(`/sessions/new?gameType=chess&gameContentId=${data.id}`);
     } catch {
       toast.error("Failed to create game");

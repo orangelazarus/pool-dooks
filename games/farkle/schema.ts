@@ -1,35 +1,47 @@
-import { pgTable, uuid, text, integer, jsonb, timestamp } from "drizzle-orm/pg-core";
-import { profiles, sessions } from "@/lib/db/schema";
+// Shapes of what Farkle keeps in core's game storage. Validated here, in code —
+// Farkle owns no database tables.
+import { z } from "zod";
+import type { Ruleset } from "./scoring";
 
-// Content row referenced by sessions.gameContentId — the settings the host
-// picked at creation time.
-export const farkleGames = pgTable("farkle_games", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  authorId: uuid("author_id").references(() => profiles.id, { onDelete: "set null" }),
-  title: text("title").notNull(),
-  targetScore: integer("target_score").notNull().default(3000),
-  // "original" | "kcd" — validated at the Zod layer in plugin.ts, plain text
-  // column matches this codebase's no-Postgres-enum convention.
-  ruleset: text("ruleset").notNull().default("original"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
-export type FarkleGame = typeof farkleGames.$inferSelect;
+/** Content row: the settings the host picked at creation time. */
+export interface FarkleContent {
+  targetScore: number;
+  ruleset: Ruleset;
+}
 
-// One row per session: the live, mutable turn state. Bypasses the shared
-// tokenOrder/answers turn engine entirely since Farkle's roll/keep/bank loop
-// doesn't fit a fixed one-answer-per-token model.
-export const farkleTurns = pgTable("farkle_turns", {
-  sessionId: uuid("session_id")
-    .primaryKey()
-    .references(() => sessions.id, { onDelete: "cascade" }),
-  diceRolled: jsonb("dice_rolled").$type<number[] | null>(),
-  diceRemaining: integer("dice_remaining").notNull().default(6),
-  turnScore: integer("turn_score").notNull().default(0),
-  rollsThisTurn: integer("rolls_this_turn").notNull().default(0),
+/** Session state: the live turn. */
+export interface FarkleState {
+  /** The roll waiting to be resolved, or null between rolls. */
+  diceRolled: number[] | null;
+  diceRemaining: number;
+  turnScore: number;
+  rollsThisTurn: number;
   // Banked totals per playerId. Also doubles as the "has this player ever
   // banked" check (scores[id] ?? 0) > 0 for the Original ruleset's one-time
   // 500-point entry threshold.
-  scores: jsonb("scores").$type<Record<string, number>>().notNull().default({}),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  scores: Record<string, number>;
+}
+
+/** What every action returns and broadcasts: the turn as clients should now show it. */
+export interface FarkleStatePayload {
+  currentPlayerId: string;
+  dice: number[] | null;
+  diceRemaining: number;
+  turnScore: number;
+  rollsThisTurn: number;
+  scores: Record<string, number>;
+  farkled: boolean;
+  banked: boolean;
+  hotDice: boolean;
+  bankedAmount?: number;
+}
+
+export const CreateSchema = z.object({
+  title: z.string().min(1).max(100).optional(),
+  targetScore: z.union([z.literal(2000), z.literal(3000), z.literal(5000)]),
+  ruleset: z.enum(["original", "kcd"]),
 });
-export type FarkleTurn = typeof farkleTurns.$inferSelect;
+
+export const KeepSchema = z.object({
+  diceIndices: z.array(z.number().int().min(0)).min(1),
+});

@@ -1,51 +1,34 @@
-import { NextRequest, NextResponse } from "next/server";
-import type { GamePlugin, SessionPlayerInfo, AnswerContext } from "@/lib/games/types";
-import type { Session, Answer } from "@/lib/db/schema";
-import { db } from "@/lib/db";
-import { eq, desc, and, ilike } from "drizzle-orm";
-import { profiles, answers } from "@/lib/db/schema";
-import { createClient } from "@/lib/supabase/server";
-import { z } from "zod";
+import type { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
-import { poolDooks, type PoolDookToken } from "./schema";
+import { defineGame, GameError, type ContentRecord, type SessionContext } from "@/lib/game-sdk";
+import {
+  CreateSchema,
+  EnhanceSchema,
+  GenerateSchema,
+  IdSchema,
+  ImportSchema,
+  ListSchema,
+  ScanSchema,
+  UpdateSchema,
+  type PoolDookContent,
+  type PoolDookToken,
+} from "./schema";
 import { resolveTokenOrder } from "./utils";
 import { serializeEditorContent } from "./editor/serialize";
 import { parsePlainText, parseJsonImport, buildFromBodyText } from "./editor/deserialize";
 import { generatePoolDook } from "./ai/generate";
-import { buildUserPrompt } from "./ai/prompts";
 import { GameBoard } from "./components/GameBoard";
 import { RevealDisplay } from "./components/RevealDisplay";
 import BrowsePage from "./pages/BrowsePage";
 import CreatePage from "./pages/CreatePage";
 import LibraryPage from "./pages/LibraryPage";
 
-function contentId(session: Session): string {
-  const id = session.gameContentId ?? session.poolDookId;
-  if (!id) throw new Error("Session has no game content ID");
-  return id;
-}
+type Ctx = SessionContext<PoolDookContent, never>;
+type SerializableDoc = Parameters<typeof serializeEditorContent>[0];
 
-const CreateSchema = z.object({
-  title: z.string().min(1).max(200),
-  theme: z.string().min(1),
-  bodyJson: z.record(z.string(), z.unknown()),
-  isPublic: z.boolean().optional().default(true),
-  aiGenerated: z.boolean().optional().default(false),
-  extraWeird: z.boolean().optional().default(false),
-  importSource: z.string().optional(),
-});
-
-const GenerateSchema = z.object({
-  theme: z.string().min(1),
-  extraWeird: z.boolean().optional().default(false),
-  title: z.string().optional(),
-});
-
+// The AI actions below are declared `auth: "account"`: they call a paid API
+// and aren't rate limited, and a guest account costs nothing to make.
 const anthropic = new Anthropic({ maxRetries: 4 });
-
-// The AI routes call a paid API and aren't rate limited, and a guest account
-// costs nothing to make — so they need a real account.
-const GUEST_AI_ERROR = "Create an account to use AI features";
 
 const ENHANCE_PROMPT = `You are helping create a Mad Libs-style fill-in-the-blank game. The user has pasted a story or passage. Your job is to pick the best words to replace with blanks — typically 8–15 words that make the story funny when swapped out.
 
@@ -86,40 +69,69 @@ Rules:
 - Preserve all story text exactly, only replacing blank lines with {{tn}} placeholders
 - If the same blank is referenced multiple times (e.g. "SAME ADJECTIVE"), reuse the same token id`;
 
-export const plugin: GamePlugin = {
+/** What the browse and library cards need — never the story text itself. */
+function toCard(row: ContentRecord<PoolDookContent>) {
+  return {
+    id: row.id,
+    title: row.title,
+    theme: row.data.theme,
+    tokens: row.data.tokens,
+    isPublic: row.isPublic,
+    aiGenerated: row.data.aiGenerated,
+    extraWeird: row.data.extraWeird,
+    createdAt: row.createdAt,
+    authorId: row.authorId,
+    author: { username: row.authorName },
+  };
+}
+
+/** Pulls the JSON object out of a model reply and turns it into editor content. */
+function storyFromModelReply(message: Anthropic.Message) {
+  const content = message.content[0];
+  if (content.type !== "text") throw new Error("Unexpected response type");
+  const jsonMatch = content.text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("No JSON found in response");
+  const result = JSON.parse(jsonMatch[0]) as { title: string; body_text: string; tokens: PoolDookToken[] };
+  const { bodyJson } = buildFromBodyText(result.body_text, result.tokens);
+  return { title: result.title, bodyText: result.body_text, tokens: result.tokens, bodyJson };
+}
+
+/** Runs an AI call, turning a failure into a message worth showing the author. */
+async function withAiErrors<T>(blockedMessage: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isFilter = message.includes("content filtering") || message.includes("content_filter");
+    throw new GameError(500, isFilter ? blockedMessage : message);
+  }
+}
+
+const tokensOf = (ctx: Ctx) => ctx.session.content.data.tokens ?? [];
+
+// Runs on the shared turn engine: one token per blank, answered through core's
+// answer route. No session state of its own.
+export const plugin = defineGame<PoolDookContent, never>({
   gameType: "pool_dooks",
   displayName: "Pool Dooks",
   description: "Fill in the blanks together, then read the hilarious result",
-  browsePath: "/games/pool_dooks",
   minPlayers: 1,
   maxPlayers: 16,
   supportsRandomize: true,
 
-  async getContentMeta(gameContentId: string) {
-    const [poolDook] = await db
-      .select({ title: poolDooks.title })
-      .from(poolDooks)
-      .where(eq(poolDooks.id, gameContentId));
-    if (!poolDook) throw new Error("Pool Dook not found");
-    return { title: poolDook.title };
+  async getLobbyMeta(ctx) {
+    const count = tokensOf(ctx).length;
+    return { subtitle: `${count} blank${count !== 1 ? "s" : ""} to fill` };
   },
 
-  async start(session: Session, _players: SessionPlayerInfo[], randomize: boolean) {
-    const [poolDook] = await db.select().from(poolDooks).where(eq(poolDooks.id, contentId(session)));
-    if (!poolDook) throw new Error("Pool Dook not found");
-    const tokens = (poolDook.tokens ?? []) as PoolDookToken[];
-    const tokenOrder = resolveTokenOrder(tokens, randomize);
-    return { tokenOrder };
+  async start(ctx, { randomize }) {
+    return { tokenOrder: resolveTokenOrder(tokensOf(ctx), randomize) };
   },
 
-  async getAnswerHints(ctx: AnswerContext) {
-    const [poolDook] = await db
-      .select({ tokens: poolDooks.tokens })
-      .from(poolDooks)
-      .where(eq(poolDooks.id, contentId(ctx.session)));
-    const tokens = (poolDook?.tokens ?? []) as PoolDookToken[];
-    const next = tokens.find((t) => t.id === ctx.nextTokenId);
-    const filled = tokens.find((t) => t.id === ctx.tokenId);
+  async getAnswerHints(ctx, answer) {
+    const tokens = tokensOf(ctx);
+    const next = tokens.find((t) => t.id === answer.nextTokenId);
+    const filled = tokens.find((t) => t.id === answer.tokenId);
     return {
       nextTokenLabel: next?.label,
       // Players never see the story while filling blanks, so the words
@@ -128,16 +140,29 @@ export const plugin: GamePlugin = {
     };
   },
 
-  async buildResult(session: Session, sessionAnswers: Answer[]) {
-    const [poolDook] = await db.select().from(poolDooks).where(eq(poolDooks.id, contentId(session)));
-    if (!poolDook) throw new Error("Pool Dook not found");
+  async buildPlayProps(ctx) {
+    const { tokenOrder, currentTokenIndex } = ctx.session;
+    // Answers given so far, so a reload or a late observer sees them too.
+    const initialAnswers = Object.fromEntries(
+      (await ctx.answers()).map((a) => [a.tokenId, { value: a.value, username: a.username ?? "Unknown" }])
+    );
+    return {
+      tokens: tokensOf(ctx),
+      tokenOrder,
+      initialAnswers,
+      initialCurrentTokenId: tokenOrder[currentTokenIndex] ?? tokenOrder[0],
+      initialCurrentPlayerId: ctx.session.currentPlayerId ?? ctx.session.hostId,
+      initialTokenIndex: currentTokenIndex,
+    };
+  },
 
-    let resultText = poolDook.bodyText;
-    for (const answer of sessionAnswers) {
-      resultText = resultText.replace(
-        new RegExp(`\\{\\{${answer.tokenId}\\}\\}`, "g"),
-        `**${answer.value}**`
-      );
+  async buildResult(ctx) {
+    const { title, data } = ctx.session.content;
+    const given = await ctx.answers();
+
+    let resultText = data.bodyText;
+    for (const answer of given) {
+      resultText = resultText.replace(new RegExp(`\\{\\{${answer.tokenId}\\}\\}`, "g"), `**${answer.value}**`);
     }
 
     resultText = resultText.replace(
@@ -152,301 +177,158 @@ export const plugin: GamePlugin = {
       }
     );
 
-    const tokens = (poolDook.tokens ?? []) as PoolDookToken[];
-    const tokenOrder = (session.tokenOrder ?? []) as string[];
-    const answersWithMeta = tokenOrder.map((tokenId) => {
+    const tokens = tokensOf(ctx);
+    const answersWithMeta = ctx.session.tokenOrder.map((tokenId) => {
       const token = tokens.find((t) => t.id === tokenId);
-      const answer = sessionAnswers.find((a) => a.tokenId === tokenId);
+      const answer = given.find((a) => a.tokenId === tokenId);
       return {
         tokenId,
         label: token?.label ?? tokenId,
         type: token?.type ?? "custom",
         value: answer?.value ?? "",
-        player: (answer as (Answer & { username?: string | null }) | undefined)?.username ?? "Unknown",
+        player: answer?.username ?? "Unknown",
       };
     });
 
-    return {
-      title: poolDook.title,
-      theme: poolDook.theme,
-      resultText,
-      answersWithMeta,
-      completedAt: session.completedAt,
-    };
+    return { title, theme: data.theme, resultText, answersWithMeta, completedAt: ctx.session.completedAt };
   },
 
-  async buildPlayProps(session: Session, _players: SessionPlayerInfo[]) {
-    const [poolDook] = await db.select().from(poolDooks).where(eq(poolDooks.id, contentId(session)));
-    if (!poolDook) throw new Error("Pool Dook not found");
-    const tokens = (poolDook.tokens ?? []) as PoolDookToken[];
-    const tokenOrder = (session.tokenOrder ?? []) as string[];
-    const currentTokenId = tokenOrder[session.currentTokenIndex ?? 0] ?? tokenOrder[0];
+  contentActions: {
+    list: {
+      method: "GET",
+      auth: "public",
+      input: ListSchema,
+      handler: async (ctx, input: z.infer<typeof ListSchema>) =>
+        (
+          await ctx.content.list({
+            mine: input.mine,
+            search: input.search,
+            where: input.theme ? { theme: input.theme } : undefined,
+          })
+        ).map(toCard),
+    },
 
-    // Answers given so far, so a reload or a late observer sees them too.
-    const given = await db
-      .select({ tokenId: answers.tokenId, value: answers.value, username: profiles.username })
-      .from(answers)
-      .leftJoin(profiles, eq(answers.playerId, profiles.id))
-      .where(eq(answers.sessionId, session.id));
-    const initialAnswers = Object.fromEntries(
-      given.map((a) => [a.tokenId, { value: a.value, username: a.username ?? "Unknown" }])
-    );
+    /** One story with its editor content — for the edit page. */
+    get: {
+      method: "GET",
+      auth: "user",
+      input: IdSchema,
+      handler: async (ctx, { id }: z.infer<typeof IdSchema>) => {
+        const row = await ctx.content.get(id);
+        if (!row) throw new GameError(404, "Not found");
+        return { id: row.id, title: row.title, theme: row.data.theme, isPublic: row.isPublic, bodyJson: row.data.bodyJson };
+      },
+    },
 
-    return {
-      tokens,
-      tokenOrder,
-      initialAnswers,
-      initialCurrentTokenId: currentTokenId,
-      initialCurrentPlayerId: session.currentPlayerId ?? session.hostId,
-      initialTokenIndex: session.currentTokenIndex ?? 0,
-    };
-  },
+    create: {
+      auth: "user",
+      input: CreateSchema,
+      handler: async (ctx, input: z.infer<typeof CreateSchema>) => {
+        const { bodyText, tokens } = serializeEditorContent(input.bodyJson as SerializableDoc);
+        const row = await ctx.content.create({
+          title: input.title,
+          isPublic: input.isPublic,
+          data: {
+            theme: input.theme,
+            bodyJson: input.bodyJson,
+            bodyText,
+            tokens,
+            aiGenerated: input.aiGenerated,
+            extraWeird: input.extraWeird,
+            importSource: input.importSource ?? null,
+          },
+        });
+        return toCard(row);
+      },
+    },
 
-  async getLobbyMeta(session: Session) {
-    const [poolDook] = await db
-      .select({ tokens: poolDooks.tokens })
-      .from(poolDooks)
-      .where(eq(poolDooks.id, contentId(session)));
-    const count = ((poolDook?.tokens ?? []) as PoolDookToken[]).length;
-    return { subtitle: `${count} blank${count !== 1 ? "s" : ""} to fill` };
-  },
+    update: {
+      method: "PUT",
+      auth: "user",
+      input: UpdateSchema,
+      handler: async (ctx, input: z.infer<typeof UpdateSchema>) => {
+        const existing = await ctx.content.get(input.id);
+        if (!existing) throw new GameError(404, "Not found");
+        const { bodyText, tokens } = serializeEditorContent(input.bodyJson as SerializableDoc);
+        // Core refuses this unless the viewer is the author.
+        const row = await ctx.content.update(input.id, {
+          title: input.title,
+          isPublic: input.isPublic,
+          data: { ...existing.data, theme: input.theme, bodyJson: input.bodyJson, bodyText, tokens },
+        });
+        return toCard(row);
+      },
+    },
 
-  async handleRequest(req: NextRequest, path: string[]) {
-    const method = req.method;
-    const [seg0, seg1, seg2] = path;
+    remove: {
+      method: "DELETE",
+      auth: "user",
+      input: IdSchema,
+      handler: async (ctx, { id }: z.infer<typeof IdSchema>) => ctx.content.remove(id),
+    },
 
-    // POST /import
-    if (method === "POST" && seg0 === "import") {
-      const supabase = await createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-      const contentType = req.headers.get("content-type") || "";
-      if (contentType.includes("multipart/form-data")) {
-        const form = await req.formData();
-        const file = form.get("file") as File | null;
-        if (!file) return NextResponse.json({ error: "No file provided" }, { status: 400 });
-        const text = await file.text();
+    /** Turns pasted text or an exported JSON file into editor content. Nothing is saved. */
+    import: {
+      auth: "user",
+      input: ImportSchema,
+      handler: async (_ctx, input: z.infer<typeof ImportSchema>) => {
+        if (input.json === undefined && !input.text) throw new GameError(400, "Provide text or json field");
         try {
-          const json = JSON.parse(text);
-          return NextResponse.json(parseJsonImport(json));
+          return input.json !== undefined ? parseJsonImport(input.json) : parsePlainText(input.text!);
         } catch {
-          return NextResponse.json(parsePlainText(text));
+          throw new GameError(400, "That doesn't look like a Pool Dooks export");
         }
-      } else {
-        const body = await req.json();
-        if (body.text) return NextResponse.json(parsePlainText(body.text));
-        if (body.json) return NextResponse.json(parseJsonImport(body.json));
-        return NextResponse.json({ error: "Provide text or json field" }, { status: 400 });
-      }
-    }
+      },
+    },
 
-    // AI routes: /ai/generate, /ai/enhance-text, /ai/scan-image
-    if (seg0 === "ai") {
-      const supabase = await createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      if (user.is_anonymous) return NextResponse.json({ error: GUEST_AI_ERROR }, { status: 403 });
+    generate: {
+      auth: "account",
+      input: GenerateSchema,
+      handler: async (_ctx, input: z.infer<typeof GenerateSchema>) =>
+        withAiErrors("The request was blocked by content filters. Try a different theme or title.", () =>
+          generatePoolDook(input.theme, input.extraWeird, input.title)
+        ),
+    },
 
-      if (method === "POST" && seg1 === "generate") {
-        const body = await req.json();
-        const parsed = GenerateSchema.safeParse(body);
-        if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    enhance: {
+      auth: "account",
+      input: EnhanceSchema,
+      handler: async (_ctx, { text }: z.infer<typeof EnhanceSchema>) =>
+        withAiErrors("The text was blocked by content filters. Try rephrasing it.", async () =>
+          storyFromModelReply(
+            await anthropic.messages.create({
+              model: "claude-sonnet-4-6",
+              max_tokens: 2048,
+              messages: [{ role: "user", content: `Here is the text to turn into a Mad Libs-style story:\n\n${text}` }],
+              system: ENHANCE_PROMPT,
+            })
+          )
+        ),
+    },
 
-        try {
-          const result = await generatePoolDook(parsed.data.theme, parsed.data.extraWeird, parsed.data.title);
-          return NextResponse.json(result);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          return NextResponse.json({ error: message }, { status: 500 });
-        }
-      }
-
-      if (method === "POST" && seg1 === "enhance-text") {
-        const body = await req.json();
-        const parsed = z.object({ text: z.string().min(10).max(5000) }).safeParse(body);
-        if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-
-        try {
-          const message = await anthropic.messages.create({
-            model: "claude-sonnet-4-6",
-            max_tokens: 2048,
-            messages: [{ role: "user", content: `Here is the text to turn into a Mad Libs-style story:\n\n${parsed.data.text}` }],
-            system: ENHANCE_PROMPT,
-          });
-          const content = message.content[0];
-          if (content.type !== "text") throw new Error("Unexpected response type");
-          const jsonMatch = content.text.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) throw new Error("No JSON in response");
-          const result = JSON.parse(jsonMatch[0]) as {
-            title: string;
-            body_text: string;
-            tokens: Array<{ id: string; label: string; type: string; position: number; occurrence: number }>;
-          };
-          const { bodyJson } = buildFromBodyText(result.body_text, result.tokens);
-          return NextResponse.json({ title: result.title, bodyText: result.body_text, tokens: result.tokens, bodyJson });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          const isFilter = message.includes("content filtering") || message.includes("content_filter");
-          return NextResponse.json(
-            { error: isFilter ? "The text was blocked by content filters. Try rephrasing it." : message },
-            { status: 500 }
-          );
-        }
-      }
-
-      if (method === "POST" && seg1 === "scan-image") {
-        try {
-          const form = await req.formData();
-          const file = form.get("image") as File | null;
-          if (!file) return NextResponse.json({ error: "No image provided" }, { status: 400 });
-
-          const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
-          if (!allowedTypes.includes(file.type)) {
-            return NextResponse.json({ error: "Unsupported image type. Use JPG, PNG, GIF, or WebP." }, { status: 400 });
-          }
-
-          const bytes = await file.arrayBuffer();
-          const base64 = Buffer.from(bytes).toString("base64");
-          const mediaType = file.type as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-
-          const message = await anthropic.messages.create({
-            model: "claude-sonnet-4-6",
-            max_tokens: 4096,
-            messages: [{
-              role: "user",
-              content: [
-                { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
-                { type: "text", text: SCAN_PROMPT },
+    /** Reads a photographed page. The browser sends the image as base64. */
+    scan: {
+      auth: "account",
+      input: ScanSchema,
+      handler: async (_ctx, { mediaType, data }: z.infer<typeof ScanSchema>) =>
+        withAiErrors("The image was blocked by content filters. Try a different image.", async () =>
+          storyFromModelReply(
+            await anthropic.messages.create({
+              model: "claude-sonnet-4-6",
+              max_tokens: 4096,
+              messages: [
+                {
+                  role: "user",
+                  content: [
+                    { type: "image", source: { type: "base64", media_type: mediaType, data } },
+                    { type: "text", text: SCAN_PROMPT },
+                  ],
+                },
               ],
-            }],
-          });
-
-          const content = message.content[0];
-          if (content.type !== "text") throw new Error("Unexpected response type");
-          const jsonMatch = content.text.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) throw new Error("No JSON found in response");
-          const parsed = JSON.parse(jsonMatch[0]) as {
-            title: string;
-            body_text: string;
-            tokens: Array<{ id: string; label: string; type: string; position: number; occurrence: number }>;
-          };
-          const { bodyJson } = buildFromBodyText(parsed.body_text, parsed.tokens);
-          return NextResponse.json({ title: parsed.title, bodyText: parsed.body_text, tokens: parsed.tokens, bodyJson });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          const isFilter = message.includes("content filtering") || message.includes("content_filter");
-          return NextResponse.json(
-            { error: isFilter ? "The image was blocked by content filters. Try a different image." : message },
-            { status: 500 }
-          );
-        }
-      }
-    }
-
-    // CRUD routes
-    // GET / (list)
-    if (method === "GET" && !seg0) {
-      const { searchParams } = new URL(req.url);
-      const theme = searchParams.get("theme");
-      const search = searchParams.get("search");
-      const mine = searchParams.get("mine") === "true";
-
-      const supabase = await createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-
-      const conditions = [];
-      if (theme) conditions.push(eq(poolDooks.theme, theme));
-      if (search) conditions.push(ilike(poolDooks.title, `%${search}%`));
-      if (mine && user) conditions.push(eq(poolDooks.authorId, user.id));
-      else conditions.push(eq(poolDooks.isPublic, true));
-
-      const rows = await db
-        .select({
-          id: poolDooks.id,
-          title: poolDooks.title,
-          theme: poolDooks.theme,
-          tokens: poolDooks.tokens,
-          isPublic: poolDooks.isPublic,
-          aiGenerated: poolDooks.aiGenerated,
-          extraWeird: poolDooks.extraWeird,
-          createdAt: poolDooks.createdAt,
-          authorId: poolDooks.authorId,
-          author: { username: profiles.username, avatarUrl: profiles.avatarUrl },
-        })
-        .from(poolDooks)
-        .leftJoin(profiles, eq(poolDooks.authorId, profiles.id))
-        .where(conditions.length ? and(...conditions) : undefined)
-        .orderBy(desc(poolDooks.createdAt))
-        .limit(50);
-
-      return NextResponse.json(rows);
-    }
-
-    // POST / (create)
-    if (method === "POST" && !seg0) {
-      const supabase = await createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-      const body = await req.json();
-      const parsed = CreateSchema.safeParse(body);
-      if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-
-      const { title, theme, bodyJson, isPublic, aiGenerated, extraWeird, importSource } = parsed.data;
-      const { bodyText, tokens } = serializeEditorContent(bodyJson as Parameters<typeof serializeEditorContent>[0]);
-
-      const [row] = await db
-        .insert(poolDooks)
-        .values({ authorId: user.id, title, theme, bodyJson, bodyText, tokens, isPublic, aiGenerated, extraWeird, importSource })
-        .returning();
-
-      return NextResponse.json(row, { status: 201 });
-    }
-
-    // GET /[id]
-    if (method === "GET" && seg0 && !seg1) {
-      const [row] = await db.select().from(poolDooks).where(eq(poolDooks.id, seg0));
-      if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-      return NextResponse.json(row);
-    }
-
-    // PUT /[id]
-    if (method === "PUT" && seg0 && !seg1) {
-      const supabase = await createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-      const [existing] = await db.select().from(poolDooks).where(eq(poolDooks.id, seg0));
-      if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
-      if (existing.authorId !== user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-      const body = await req.json();
-      const { bodyText, tokens } = serializeEditorContent(body.bodyJson);
-      const [updated] = await db
-        .update(poolDooks)
-        .set({ ...body, bodyText, tokens, updatedAt: new Date() })
-        .where(eq(poolDooks.id, seg0))
-        .returning();
-
-      return NextResponse.json(updated);
-    }
-
-    // DELETE /[id]
-    if (method === "DELETE" && seg0 && !seg1) {
-      const supabase = await createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-      const [existing] = await db.select().from(poolDooks).where(eq(poolDooks.id, seg0));
-      if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
-      if (existing.authorId !== user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-      await db.delete(poolDooks).where(eq(poolDooks.id, seg0));
-      return NextResponse.json({ ok: true });
-    }
-
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+            })
+          )
+        ),
+    },
   },
 
   PlayComponent: GameBoard,
@@ -454,4 +336,4 @@ export const plugin: GamePlugin = {
   BrowsePage,
   CreatePage,
   LibraryPage,
-};
+});

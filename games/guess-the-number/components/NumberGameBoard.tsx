@@ -1,8 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "@/hooks/useSession";
-import { useGameState } from "@/hooks/useGameState";
+import { submitAnswer, useGameSession, useGameState } from "@/lib/game-sdk/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -47,12 +46,8 @@ export function NumberGameBoard({
     tokenIndex: initialTokenIndex,
   });
 
-  useSession(shareCode, (event) => {
-    handleEvent(event);
-    if (event.type === "session:completed" || event.type === "session:revealed") {
-      router.push(`/sessions/${shareCode}/reveal`);
-    }
-  });
+  // The SDK hook also takes everyone to the reveal when the game ends.
+  useGameSession(shareCode, { onSessionEvent: handleEvent });
 
   const isMyTurn = state.currentPlayerId === currentUserId;
   const myTokenId = `guess_${currentUserId}`;
@@ -70,14 +65,7 @@ export function NumberGameBoard({
     }
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/sessions/${shareCode}/answer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tokenId: state.currentTokenId, value: String(num) }),
-      });
-      let data: { ok?: boolean; isComplete?: boolean } = {};
-      try { data = await res.json(); } catch {}
-      if (!res.ok) throw new Error();
+      const data = await submitAnswer(shareCode, state.currentTokenId!, String(num));
       if (data.isComplete) router.push(`/sessions/${shareCode}/reveal`);
       else setGuess("");
     } catch {

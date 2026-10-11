@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Square } from "chess.js";
-import { useSession } from "@/hooks/useSession";
+import { gameAction, GameActionError, useGameSession } from "@/lib/game-sdk/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -56,14 +56,12 @@ export function ChessBoard({
     setPromotion(null);
   };
 
-  useSession(shareCode, (event) => {
-    if (event.type === "chess:state") {
-      // Another client's action — reflect it live for every open browser.
-      applyState(event.payload as ChessStatePayload);
-    }
-    if (event.type === "session:completed" || event.type === "session:revealed") {
-      router.push(`/sessions/${shareCode}/reveal`);
-    }
+  // Another client's action — reflect it live for every open browser. The
+  // SDK hook also takes everyone to the reveal when the game ends.
+  useGameSession(shareCode, {
+    onEvent: (name, data) => {
+      if (name === "state") applyState(data as ChessStatePayload);
+    },
   });
 
   // Phones drop the realtime connection in the background, so catch up on
@@ -72,9 +70,7 @@ export function ChessBoard({
     const refresh = async () => {
       if (document.visibilityState !== "visible") return;
       try {
-        const res = await fetch(`/api/games/chess/${shareCode}/state`);
-        if (!res.ok) return;
-        const next: ChessStatePayload = await res.json();
+        const next = await gameAction<ChessStatePayload>("chess", shareCode, "state", undefined, "GET");
         if (next.result) router.push(`/sessions/${shareCode}/reveal`);
         else applyState(next);
       } catch {
@@ -105,20 +101,12 @@ export function ChessBoard({
   async function call(action: "move" | "resign" | "draw" | "flag", body?: unknown, quiet = false) {
     setBusy(true);
     try {
-      const res = await fetch(`/api/games/chess/${shareCode}/${action}`, {
-        method: "POST",
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        // Some rejections carry the authoritative state (e.g. your clock ran out).
-        if (data.state) applyState(data.state);
-        throw new Error(typeof data.error === "string" ? data.error : "Something went wrong");
-      }
-      applyState(data as ChessStatePayload);
-      return data as ChessStatePayload;
+      const data = await gameAction<ChessStatePayload>("chess", shareCode, action, body);
+      applyState(data);
+      return data;
     } catch (e) {
+      // Some rejections carry the authoritative state (e.g. your clock ran out).
+      if (e instanceof GameActionError && e.data.state) applyState(e.data.state as ChessStatePayload);
       if (!quiet) toast.error(e instanceof Error ? e.message : "Something went wrong");
       return null;
     } finally {

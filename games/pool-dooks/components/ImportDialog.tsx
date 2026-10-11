@@ -13,7 +13,24 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { contentAction } from "@/lib/game-sdk/client";
+import { IMAGE_TYPES, MAX_IMAGE_BYTES } from "../schema";
 import { Upload, Camera, Sparkles } from "lucide-react";
+
+interface Draft {
+  bodyJson: JSONContent;
+  title?: string;
+}
+
+/** The file's bytes as base64, without the data-URL prefix. */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+    reader.onerror = () => reject(new Error("Couldn't read that image"));
+    reader.readAsDataURL(file);
+  });
+}
 
 interface ImportDialogProps {
   open: boolean;
@@ -32,14 +49,8 @@ export function ImportDialog({ open, onClose, onImport }: ImportDialogProps) {
     if (!text.trim()) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/games/pool_dooks/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!res.ok) throw new Error("Import failed");
-      const data = await res.json();
-      onImport({ bodyJson: data.bodyJson as JSONContent });
+      const data = await contentAction<Draft>("pool_dooks", "import", { text });
+      onImport({ bodyJson: data.bodyJson });
     } catch {
       toast.error("Import failed");
     } finally {
@@ -51,14 +62,8 @@ export function ImportDialog({ open, onClose, onImport }: ImportDialogProps) {
     if (!text.trim()) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/games/pool_dooks/ai/enhance-text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Enhancement failed");
-      onImport({ bodyJson: data.bodyJson as JSONContent, title: data.title });
+      const data = await contentAction<Draft>("pool_dooks", "enhance", { text });
+      onImport({ bodyJson: data.bodyJson, title: data.title });
       toast.success("Blanks added by AI!");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Enhancement failed";
@@ -80,12 +85,15 @@ export function ImportDialog({ open, onClose, onImport }: ImportDialogProps) {
     if (!file) return;
     setLoading(true);
     try {
-      const form = new FormData();
-      form.append("image", file);
-      const res = await fetch("/api/games/pool_dooks/ai/scan-image", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Scan failed");
-      onImport({ bodyJson: data.bodyJson as JSONContent, title: data.title });
+      if (!(IMAGE_TYPES as readonly string[]).includes(file.type)) {
+        throw new Error("Unsupported image type. Use JPG, PNG, GIF, or WebP.");
+      }
+      if (file.size > MAX_IMAGE_BYTES) throw new Error("That image is too large — use one under 5 MB.");
+      const data = await contentAction<Draft>("pool_dooks", "scan", {
+        mediaType: file.type,
+        data: await fileToBase64(file),
+      });
+      onImport({ bodyJson: data.bodyJson, title: data.title });
       toast.success("Page scanned successfully!");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Scan failed";
@@ -100,12 +108,16 @@ export function ImportDialog({ open, onClose, onImport }: ImportDialogProps) {
     if (!file) return;
     setLoading(true);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/games/pool_dooks/import", { method: "POST", body: form });
-      if (!res.ok) throw new Error("Import failed");
-      const data = await res.json();
-      onImport({ bodyJson: data.bodyJson as JSONContent });
+      // An exported story is JSON; anything else is treated as plain text.
+      const fileText = await file.text();
+      let payload: { json: unknown } | { text: string };
+      try {
+        payload = { json: JSON.parse(fileText) };
+      } catch {
+        payload = { text: fileText };
+      }
+      const data = await contentAction<Draft>("pool_dooks", "import", payload);
+      onImport({ bodyJson: data.bodyJson });
     } catch {
       toast.error("Import failed");
     } finally {

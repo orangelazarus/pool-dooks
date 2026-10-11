@@ -1,43 +1,30 @@
+"use client";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { db } from "@/lib/db";
-import { profiles } from "@/lib/db/schema";
-import { poolDooks, THEMES } from "../schema";
-import { eq, desc } from "drizzle-orm";
+import { useSearchParams } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
-import { PoolDookCard } from "../components/PoolDookCard";
-import { ThemeFilter } from "../components/ThemeFilter";
 import { cn } from "@/lib/utils";
+import { contentAction } from "@/lib/game-sdk/client";
+import { THEMES } from "../schema";
+import { PoolDookCard, type PoolDookSummary } from "../components/PoolDookCard";
+import { ThemeFilter } from "../components/ThemeFilter";
 
-export default async function BrowsePage({
-  searchParams,
-}: {
-  searchParams?: Promise<{ theme?: string; search?: string }>;
-}) {
-  const { theme, search } = (await searchParams) ?? {};
+export default function BrowsePage() {
+  const searchParams = useSearchParams();
+  const theme = searchParams.get("theme") ?? undefined;
+  const search = searchParams.get("search") ?? undefined;
+  // null while loading
+  const [stories, setStories] = useState<PoolDookSummary[] | null>(null);
 
-  const rows = await db
-    .select({
-      id: poolDooks.id,
-      title: poolDooks.title,
-      theme: poolDooks.theme,
-      tokens: poolDooks.tokens,
-      aiGenerated: poolDooks.aiGenerated,
-      extraWeird: poolDooks.extraWeird,
-      createdAt: poolDooks.createdAt,
-      authorId: poolDooks.authorId,
-      author: { username: profiles.username },
-    })
-    .from(poolDooks)
-    .leftJoin(profiles, eq(poolDooks.authorId, profiles.id))
-    .where(eq(poolDooks.isPublic, true))
-    .orderBy(desc(poolDooks.createdAt))
-    .limit(48);
-
-  const filtered = rows.filter((r) => {
-    if (theme && r.theme !== theme) return false;
-    if (search && !r.title.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
+  useEffect(() => {
+    let current = true;
+    contentAction<PoolDookSummary[]>("pool_dooks", "list", { theme, search }, "GET")
+      .then((rows) => current && setStories(rows))
+      .catch(() => current && setStories([]));
+    return () => {
+      current = false;
+    };
+  }, [theme, search]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -58,7 +45,9 @@ export default async function BrowsePage({
 
       <ThemeFilter themes={THEMES} active={theme} />
 
-      {filtered.length === 0 ? (
+      {stories === null ? (
+        <p className="text-center py-20 text-muted-foreground">Loading…</p>
+      ) : stories.length === 0 ? (
         <div className="text-center py-20 text-muted-foreground">
           <p className="text-lg">No pool dooks found.</p>
           <Link href="/games/pool_dooks/create" className={cn(buttonVariants(), "mt-4 inline-flex")}>
@@ -67,7 +56,7 @@ export default async function BrowsePage({
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
-          {filtered.map((ml) => (
+          {stories.map((ml) => (
             <PoolDookCard key={ml.id} poolDook={ml} />
           ))}
         </div>
