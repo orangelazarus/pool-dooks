@@ -46,6 +46,9 @@ export const sessions = pgTable(
       .references(() => profiles.id),
     status: text("status").notNull().default("lobby"), // lobby | in_progress | completed
     randomizeOrder: boolean("randomize_order").default(false),
+    // Public sessions are listed on the home page: open to join while in the
+    // lobby, open to watch once started.
+    isPublic: boolean("is_public").notNull().default(false),
     tokenOrder: jsonb("token_order"),
     currentTokenIndex: integer("current_token_index").default(0),
     currentPlayerId: uuid("current_player_id").references(() => profiles.id),

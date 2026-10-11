@@ -29,17 +29,22 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Protect app routes
-  const isAuthRoute = request.nextUrl.pathname.startsWith("/login") ||
-    request.nextUrl.pathname.startsWith("/signup");
-  const isApiRoute = request.nextUrl.pathname.startsWith("/api");
+  // Logged-out visitors can browse the home page and open any session link
+  // (lobby, watching, reveal). Anything that needs an identity sends them to
+  // pick a guest name first, then on to where they were going.
+  const { pathname, search } = request.nextUrl;
+  const isAuthRoute =
+    pathname.startsWith("/login") || pathname.startsWith("/signup") || pathname.startsWith("/guest");
+  const isApiRoute = pathname.startsWith("/api");
   const isPublicRoute =
-    request.nextUrl.pathname === "/" ||
-    request.nextUrl.pathname.startsWith("/sessions");
+    pathname === "/" ||
+    pathname === "/home" ||
+    (pathname.startsWith("/sessions/") && !pathname.startsWith("/sessions/new"));
 
   if (!user && !isAuthRoute && !isApiRoute && !isPublicRoute) {
     const url = request.nextUrl.clone();
-    url.pathname = "/login";
+    url.pathname = "/guest";
+    url.search = `?next=${encodeURIComponent(pathname + search)}`;
     return NextResponse.redirect(url);
   }
 

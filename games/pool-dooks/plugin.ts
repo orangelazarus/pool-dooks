@@ -43,6 +43,10 @@ const GenerateSchema = z.object({
 
 const anthropic = new Anthropic({ maxRetries: 4 });
 
+// The AI routes call a paid API and aren't rate limited, and a guest account
+// costs nothing to make — so they need a real account.
+const GUEST_AI_ERROR = "Create an account to use AI features";
+
 const ENHANCE_PROMPT = `You are helping create a Pool Dooks game. The user has pasted a story or passage. Your job is to pick the best words to replace with blanks — typically 8–15 words that make the story funny when swapped out.
 
 Choose interesting nouns, verbs, adjectives, adverbs, names, and places. Avoid replacing articles, prepositions, or words that would make the sentence grammatically broken.
@@ -222,11 +226,12 @@ export const plugin: GamePlugin = {
 
     // AI routes: /ai/generate, /ai/enhance-text, /ai/scan-image
     if (seg0 === "ai") {
-      if (method === "POST" && seg1 === "generate") {
-        const supabase = await createClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      if (user.is_anonymous) return NextResponse.json({ error: GUEST_AI_ERROR }, { status: 403 });
 
+      if (method === "POST" && seg1 === "generate") {
         const body = await req.json();
         const parsed = GenerateSchema.safeParse(body);
         if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });

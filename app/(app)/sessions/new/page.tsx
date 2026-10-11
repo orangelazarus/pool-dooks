@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { Shuffle, Gamepad2, Users } from "lucide-react";
+import { Shuffle, Gamepad2, Users, Globe } from "lucide-react";
 
 export default function NewSessionPage() {
   const router = useRouter();
@@ -19,6 +19,7 @@ export default function NewSessionPage() {
   const gameContentId = searchParams.get("gameContentId");
   const [joinCode, setJoinCode] = useState("");
   const [randomize, setRandomize] = useState(false);
+  const [isPublic, setIsPublic] = useState(false);
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
   const [contentTitle, setContentTitle] = useState<string | null>(null);
@@ -50,7 +51,7 @@ export default function NewSessionPage() {
       const res = await fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gameType, gameContentId, randomizeOrder: randomize }),
+        body: JSON.stringify({ gameType, gameContentId, randomizeOrder: randomize, isPublic }),
       });
       if (!res.ok) throw new Error();
       const { shareCode } = await res.json();
@@ -118,6 +119,20 @@ export default function NewSessionPage() {
                 <Switch id="randomize" checked={randomize} onCheckedChange={setRandomize} />
               </div>
             )}
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="public" className="cursor-pointer flex items-center gap-2">
+                  <Globe className="h-4 w-4" />
+                  Public game
+                </Label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {isPublic
+                    ? "Listed on the home page: anyone can join, and anyone can watch once it starts"
+                    : "Only people you share the code with can join"}
+                </p>
+              </div>
+              <Switch id="public" checked={isPublic} onCheckedChange={setIsPublic} />
+            </div>
             <Button onClick={handleCreate} disabled={creating} className="w-full">
               {creating ? "Creating..." : "Create Session"}
             </Button>
