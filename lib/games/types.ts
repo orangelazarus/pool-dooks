@@ -38,9 +38,18 @@ export interface GamePlugin {
   ): Promise<{ tokenOrder: string[]; firstPlayerId?: string }>;
 
   /**
-   * Called after an answer is recorded to get the label for push notifications.
+   * Called after an answer is recorded.
+   *
+   * `nextTokenLabel` names the next blank for the "your turn" push.
+   *
+   * `answered` describes the blank that was just filled. Return it ONLY if this
+   * game's answers are public during play: when present, the answer is shown
+   * to everyone in the session and sent in push notifications. Games with
+   * secret answers (e.g. Guess the Number) must leave it out.
    */
-  getAnswerHints(ctx: AnswerContext): Promise<{ nextTokenLabel?: string }>;
+  getAnswerHints(
+    ctx: AnswerContext
+  ): Promise<{ nextTokenLabel?: string; answered?: { label: string; type: string } }>;
 
   /**
    * Builds the result payload sent to the reveal screen.

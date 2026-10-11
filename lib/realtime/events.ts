@@ -3,7 +3,15 @@ export type SessionEvent =
   | { type: "player:left"; payload: { playerId: string } }
   | { type: "session:started"; payload: { tokenOrder: string[]; firstPlayerId: string } }
   | { type: "turn:changed"; payload: { currentTokenId: string; currentPlayerId: string; tokenIndex: number; total: number } }
-  | { type: "answer:confirmed"; payload: { tokenId: string; playerId: string } }
+  | {
+      type: "answer:confirmed";
+      payload: {
+        tokenId: string;
+        playerId: string;
+        // Present only for games whose answers are public during play.
+        answer?: { username: string; value: string; label: string; tokenType: string };
+      };
+    }
   | { type: "session:completed"; payload: { completedAt: string } }
   | { type: "session:revealed"; payload: Record<string, never> }
   | { type: "rematch:proposed"; payload: { proposedBy: string; proposedByUsername: string } }

@@ -3,7 +3,7 @@ import type { GamePlugin, SessionPlayerInfo, AnswerContext } from "@/lib/games/t
 import type { Session, Answer } from "@/lib/db/schema";
 import { db } from "@/lib/db";
 import { eq, desc, and, ilike } from "drizzle-orm";
-import { profiles } from "@/lib/db/schema";
+import { profiles, answers } from "@/lib/db/schema";
 import { createClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
@@ -113,14 +113,19 @@ export const plugin: GamePlugin = {
   },
 
   async getAnswerHints(ctx: AnswerContext) {
-    if (!ctx.nextTokenId) return {};
     const [poolDook] = await db
       .select({ tokens: poolDooks.tokens })
       .from(poolDooks)
       .where(eq(poolDooks.id, contentId(ctx.session)));
     const tokens = (poolDook?.tokens ?? []) as PoolDookToken[];
-    const token = tokens.find((t) => t.id === ctx.nextTokenId);
-    return { nextTokenLabel: token?.label };
+    const next = tokens.find((t) => t.id === ctx.nextTokenId);
+    const filled = tokens.find((t) => t.id === ctx.tokenId);
+    return {
+      nextTokenLabel: next?.label,
+      // Players never see the story while filling blanks, so the words
+      // themselves are safe (and fun) to share as they come in.
+      answered: filled ? { label: filled.label, type: filled.type } : undefined,
+    };
   },
 
   async buildResult(session: Session, sessionAnswers: Answer[]) {
@@ -176,9 +181,21 @@ export const plugin: GamePlugin = {
     const tokens = (poolDook.tokens ?? []) as PoolDookToken[];
     const tokenOrder = (session.tokenOrder ?? []) as string[];
     const currentTokenId = tokenOrder[session.currentTokenIndex ?? 0] ?? tokenOrder[0];
+
+    // Answers given so far, so a reload or a late observer sees them too.
+    const given = await db
+      .select({ tokenId: answers.tokenId, value: answers.value, username: profiles.username })
+      .from(answers)
+      .leftJoin(profiles, eq(answers.playerId, profiles.id))
+      .where(eq(answers.sessionId, session.id));
+    const initialAnswers = Object.fromEntries(
+      given.map((a) => [a.tokenId, { value: a.value, username: a.username ?? "Unknown" }])
+    );
+
     return {
       tokens,
       tokenOrder,
+      initialAnswers,
       initialCurrentTokenId: currentTokenId,
       initialCurrentPlayerId: session.currentPlayerId ?? session.hostId,
       initialTokenIndex: session.currentTokenIndex ?? 0,
