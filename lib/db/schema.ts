@@ -80,6 +80,34 @@ export const sessionPlayers = pgTable(
   ]
 );
 
+// Generic storage for game plugins, reached only through lib/game-sdk and
+// always scoped to one gameType. See drizzle/0009_game_storage.sql.
+export const gameContent = pgTable(
+  "game_content",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    gameType: text("game_type").notNull(),
+    authorId: uuid("author_id").references(() => profiles.id, { onDelete: "set null" }),
+    title: text("title").notNull(),
+    isPublic: boolean("is_public").notNull().default(true),
+    data: jsonb("data").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_game_content_type_created").on(t.gameType, t.createdAt.desc())]
+);
+
+export const gameState = pgTable("game_state", {
+  sessionId: uuid("session_id")
+    .primaryKey()
+    .references(() => sessions.id, { onDelete: "cascade" }),
+  gameType: text("game_type").notNull(),
+  data: jsonb("data").notNull(),
+  // Bumped on every write; the optimistic-concurrency guard.
+  version: integer("version").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const answers = pgTable(
   "answers",
   {

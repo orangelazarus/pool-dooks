@@ -74,7 +74,7 @@ export async function POST(
   await sendPushToUsers(nonHostIds, {
     title: "Game Started!",
     body: `${plugin.displayName} has started. Get ready!`,
-    url: `/${code}/play`,
+    url: `/sessions/${code}/play`,
   }).catch(() => {});
 
   return NextResponse.json(updated);
