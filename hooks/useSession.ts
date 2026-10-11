@@ -9,8 +9,11 @@ export function useSession(
   onEvent: (event: SessionEvent) => void
 ) {
   const channelRef = useRef<RealtimeChannel | null>(null);
+  // Keep the latest handler without resubscribing every render.
   const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  });
 
   useEffect(() => {
     if (!shareCode) return;

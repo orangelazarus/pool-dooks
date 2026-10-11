@@ -38,7 +38,7 @@ export async function POST(
   await sendPushToUsers(playerIds, {
     title: "The story is revealed!",
     body: "Come see the hilarious Pool Dook result!",
-    url: `/${code}/reveal`,
+    url: `/sessions/${code}/reveal`,
   }).catch(() => {});
 
   return NextResponse.json({ ok: true });

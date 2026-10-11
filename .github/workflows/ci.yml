@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The boundary check diffs against the base branch.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Game and core changes are in separate PRs
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-pr-boundary.mjs "origin/${{ github.base_ref }}"
+
+      - name: Game registry is up to date
+        run: |
+          npm run games:sync
+          git diff --exit-code lib/games/registry.ts
+
+      - name: Typecheck
+        # next-env.d.ts imports route types that only exist once generated.
+        run: |
+          npx next typegen
+          npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint

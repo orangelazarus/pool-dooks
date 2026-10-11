@@ -128,7 +128,7 @@ export async function POST(
         sendPushToUsers(otherIds, {
           title: "Story revealed!",
           body: "All blanks filled — come see the hilarious result!",
-          url: `/${code}/reveal`,
+          url: `/sessions/${code}/reveal`,
         }),
       ]).catch(() => {});
     } else {
@@ -137,7 +137,7 @@ export async function POST(
         .set({ currentTokenIndex: nextIndex, currentPlayerId: nextPlayerId })
         .where(eq(sessions.id, session.id));
 
-      const playUrl = `/${code}/play`;
+      const playUrl = `/sessions/${code}/play`;
       // The next player hears about the answer in their "your turn" push;
       // everyone else gets the answer on its own.
       const bystanderIds = otherIds.filter((id) => id !== nextPlayerId);

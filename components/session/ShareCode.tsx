@@ -1,17 +1,11 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Copy, Check } from "lucide-react";
 import { toast } from "sonner";
 
 export function ShareCode({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
-  const [origin, setOrigin] = useState("");
-
-  useEffect(() => {
-    setOrigin(window.location.origin);
-  }, []);
-
   const handleCopy = async () => {
     await navigator.clipboard.writeText(code);
     setCopied(true);
@@ -20,7 +14,7 @@ export function ShareCode({ code }: { code: string }) {
   };
 
   const handleCopyLink = async () => {
-    await navigator.clipboard.writeText(`${origin}/sessions/${code}`);
+    await navigator.clipboard.writeText(`${window.location.origin}/sessions/${code}`);
     toast.success("Link copied!");
   };
 
@@ -40,14 +34,12 @@ export function ShareCode({ code }: { code: string }) {
           {copied ? <Check className="h-5 w-5 text-green-500" /> : <Copy className="h-5 w-5" />}
         </Button>
       </div>
-      {origin && (
-        <p className="text-xs text-muted-foreground">
-          Or{" "}
-          <button onClick={handleCopyLink} className="font-mono text-foreground underline underline-offset-2 hover:opacity-70">
-            copy the link
-          </button>
-        </p>
-      )}
+      <p className="text-xs text-muted-foreground">
+        Or{" "}
+        <button onClick={handleCopyLink} className="font-mono text-foreground underline underline-offset-2 hover:opacity-70">
+          copy the link
+        </button>
+      </p>
     </div>
   );
 }
