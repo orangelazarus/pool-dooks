@@ -12,7 +12,7 @@ Project Settings → Database → Connection String → Transaction mode
 
 ## 2. Configure Environment Variables
 
-Edit `.env.local` with your actual values:
+Create `.env.local` in the project root with your actual values:
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
@@ -36,13 +36,17 @@ VAPID_PRIVATE_KEY=<private key>
 VAPID_SUBJECT=mailto:you@example.com
 ```
 
-## 4. Push Database Schema
+## 4. Create the Database Schema
+
+For a **new, empty** database:
 
 ```bash
 npm run db:push
 ```
 
-This creates all tables in your Supabase Postgres database.
+This creates all tables in your Supabase Postgres database, including each game's own tables (`games/*/schema.ts`).
+
+Never run `db:push` against a database that already has data — the migration snapshot is stale and it can propose destructive changes. Later schema changes are hand-written, numbered SQL files in `drizzle/`, applied through the Supabase SQL Editor **before** the code that needs them is deployed.
 
 ## 5. Configure Row-Level Security (RLS)
 
@@ -93,19 +97,36 @@ CREATE POLICY "service_role_bypass" ON answers FOR ALL TO service_role USING (tr
 CREATE POLICY "service_role_bypass_sessions" ON sessions FOR ALL TO service_role USING (true);
 ```
 
+Then lock down the game tables the same way, by running the RLS statements in:
+- `drizzle/0005_farkle_rls.sql` — `farkle_games`, `farkle_turns`
+- `drizzle/0006_number_games_rls.sql` — `number_games`
+- `drizzle/0007_chess.sql` (the `ALTER TABLE … ENABLE ROW LEVEL SECURITY` and `CREATE POLICY` lines at the end) — `chess_games`, `chess_states`
+
+Every table in the `public` schema is exposed through Supabase's REST API, so a table without RLS is readable and writable by anyone holding the anon key.
+
 ## 6. Enable Realtime in Supabase
 
 In Supabase Dashboard → Realtime → enable Realtime for:
 - `sessions` table
 - `session_players` table
 
-## 7. Run the Dev Server
+## 7. Enable Anonymous Sign-Ins
+
+In Supabase Dashboard → Authentication → Sign In / Providers → enable **Anonymous sign-ins**.
+
+Guest play depends on this: a visitor without an account picks a name and gets an anonymous account.
+
+## 8. Run the Dev Server
 
 ```bash
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000)
+
+Use port 3000: the lobby calls back to `NEXT_PUBLIC_APP_URL` when someone joins, so a different port leaves new players stuck in a redirect loop.
+
+`npm run dev` and `npm run build` first run `npm run games:sync`, which regenerates `lib/games/registry.ts` from the plugins in `games/`.
 
 ## PWA Icons
 
@@ -117,8 +138,14 @@ Add icons to `/public/icons/`:
 
 ```
 app/          Next.js App Router pages + API routes
-components/   React components (editor, session, mad-lib, layout)
+games/        One self-contained directory per game (pool-dooks, guess-the-number, farkle, chess)
+components/   Shared React components (session, layout, ui)
 hooks/        Custom React hooks (useSession, useGameState, usePushNotifications)
-lib/          Core logic (db schema, AI, push, realtime, editor utils)
+lib/          Core logic (db schema, game registry, session access, auth, push, realtime)
+drizzle/      Numbered SQL migrations
+scripts/      sync-games.mjs — generates the game registry
 public/       Static assets (manifest.json, sw.js, icons)
+proxy.ts      Auth gate: what logged-out visitors can reach
 ```
+
+See [README.md](README.md) for a fuller breakdown and [docs/creating-a-game.md](docs/creating-a-game.md) for adding a game.
