@@ -47,4 +47,5 @@ purpose** — do not "fix" them:
   `mailto:admin@madlibs.app`. Both are external identifiers — changing the strings
   here just breaks auth.
 - "Mad libs" in `README.md`, `SETUP.md`, and `games/pool-dooks/ai/prompts.ts`
-  describes the game *genre*; the AI prompts depend on it.
+  describes the game *genre*; the AI prompts depend on it. The same goes for the
+  enhance and scan prompts in `games/pool-dooks/plugin.ts`.
