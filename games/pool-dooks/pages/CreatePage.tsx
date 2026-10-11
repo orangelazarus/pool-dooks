@@ -45,11 +45,10 @@ export default function CreatePage() {
   const [saving, setSaving] = useState(false);
   const [extraWeird, setExtraWeird] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [isEdit, setIsEdit] = useState(false);
+  const isEdit = !!editId;
 
   useEffect(() => {
     if (!editId) return;
-    setIsEdit(true);
     fetch(`/api/games/pool_dooks/${editId}`)
       .then((r) => r.json())
       .then((data) => {
