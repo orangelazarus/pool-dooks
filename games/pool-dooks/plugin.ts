@@ -47,13 +47,13 @@ const anthropic = new Anthropic({ maxRetries: 4 });
 // costs nothing to make — so they need a real account.
 const GUEST_AI_ERROR = "Create an account to use AI features";
 
-const ENHANCE_PROMPT = `You are helping create a Pool Dooks game. The user has pasted a story or passage. Your job is to pick the best words to replace with blanks — typically 8–15 words that make the story funny when swapped out.
+const ENHANCE_PROMPT = `You are helping create a Mad Libs-style fill-in-the-blank game. The user has pasted a story or passage. Your job is to pick the best words to replace with blanks — typically 8–15 words that make the story funny when swapped out.
 
 Choose interesting nouns, verbs, adjectives, adverbs, names, and places. Avoid replacing articles, prepositions, or words that would make the sentence grammatically broken.
 
 Return ONLY valid JSON, no other text:
 {
-  "title": "A short title for this pool dook (3-6 words)",
+  "title": "A short title for this story (3-6 words)",
   "body_text": "The full text with {{t1}}, {{t2}}, etc. replacing the chosen words",
   "tokens": [
     {"id": "t1", "label": "noun", "type": "noun", "position": 0, "occurrence": 1}
@@ -65,7 +65,7 @@ Token types: noun, plural noun, verb, verb -ing, verb past tense, adjective, adv
 The label is ONLY the part of speech — no descriptors.
 The occurrence field counts how many times that type has appeared so far (first noun = 1, second noun = 2, etc.).`;
 
-const SCAN_PROMPT = `You are scanning a physical Pool Dooks page. Extract the title and full story text, replacing each blank line with a {{token_id}} placeholder.
+const SCAN_PROMPT = `You are scanning a physical Mad Libs page. Extract the title and full story text, replacing each blank line with a {{token_id}} placeholder.
 
 Return ONLY valid JSON in this exact format, no other text:
 {
@@ -254,7 +254,7 @@ export const plugin: GamePlugin = {
           const message = await anthropic.messages.create({
             model: "claude-sonnet-4-6",
             max_tokens: 2048,
-            messages: [{ role: "user", content: `Here is the text to turn into a Pool Dook:\n\n${parsed.data.text}` }],
+            messages: [{ role: "user", content: `Here is the text to turn into a Mad Libs-style story:\n\n${parsed.data.text}` }],
             system: ENHANCE_PROMPT,
           });
           const content = message.content[0];
