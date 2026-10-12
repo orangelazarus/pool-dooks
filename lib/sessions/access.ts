@@ -1,7 +1,6 @@
-import { and, count, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, sessionPlayers } from "@/lib/db";
 import type { Session } from "@/lib/db/schema";
-import { getPlugin } from "@/lib/games/registry";
 
 // player   — on the roster
 // observer — not on the roster, but the session is public so they may watch
@@ -21,13 +20,4 @@ export async function getViewerRole(
     if (membership) return "player";
   }
   return session.isPublic ? "observer" : "denied";
-}
-
-/** Has the lobby reached the game's player limit? */
-export async function isLobbyFull(session: Pick<Session, "id" | "gameType">): Promise<boolean> {
-  const [{ count: playerCount }] = await db
-    .select({ count: count() })
-    .from(sessionPlayers)
-    .where(eq(sessionPlayers.sessionId, session.id));
-  return Number(playerCount) >= getPlugin(session.gameType).maxPlayers;
 }

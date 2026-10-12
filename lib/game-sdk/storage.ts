@@ -1,9 +1,11 @@
 // Database access for game plugins. Internal to the SDK: games reach it only
 // through the ContentApi / StateApi objects built in context.ts, which pin
-// every call to one gameType (and, for state, one session).
+// every call to one gameType (and, for state, one session). Queries go
+// through executor(), so inside a game action they join its transaction.
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
-import { db, gameContent, gameState, profiles } from "@/lib/db";
+import { gameContent, gameState, profiles } from "@/lib/db";
 import { GameError, StateConflictError } from "./errors";
+import { executor } from "./tx";
 import type { ContentListOptions, ContentRecord } from "./types";
 
 // Generous for a board position or a story; small enough that a buggy or
@@ -35,7 +37,7 @@ const contentColumns = {
 };
 
 const selectContent = () =>
-  db.select(contentColumns).from(gameContent).leftJoin(profiles, eq(gameContent.authorId, profiles.id));
+  executor().select(contentColumns).from(gameContent).leftJoin(profiles, eq(gameContent.authorId, profiles.id));
 
 export async function getContent<C>(gameType: string, id: string): Promise<ContentRecord<C> | null> {
   if (!UUID.test(id)) return null;
@@ -81,7 +83,7 @@ export async function createContent<C>(
   input: { title: string; data: C; isPublic?: boolean }
 ): Promise<ContentRecord<C>> {
   assertSize(input.data, "This content");
-  const [row] = await db
+  const [row] = await executor()
     .insert(gameContent)
     .values({ gameType, authorId, title: cleanTitle(input.title), isPublic: input.isPublic ?? true, data: input.data })
     .returning({ id: gameContent.id });
@@ -103,7 +105,7 @@ export async function updateContent<C>(
 ): Promise<ContentRecord<C>> {
   await ownContent(gameType, id, viewerId);
   if (patch.data !== undefined) assertSize(patch.data, "This content");
-  await db
+  await executor()
     .update(gameContent)
     .set({
       ...(patch.title !== undefined ? { title: cleanTitle(patch.title) } : {}),
@@ -117,7 +119,7 @@ export async function updateContent<C>(
 
 export async function removeContent(gameType: string, id: string, viewerId: string): Promise<void> {
   await ownContent(gameType, id, viewerId);
-  await db.delete(gameContent).where(and(eq(gameContent.gameType, gameType), eq(gameContent.id, id)));
+  await executor().delete(gameContent).where(and(eq(gameContent.gameType, gameType), eq(gameContent.id, id)));
 }
 
 // ── Session state ───────────────────────────────────────────────────────────
@@ -125,7 +127,7 @@ export async function removeContent(gameType: string, id: string, viewerId: stri
 type Stored<S> = { data: S; version: number };
 
 export async function getState<S>(gameType: string, sessionId: string): Promise<Stored<S> | null> {
-  const [row] = await db
+  const [row] = await executor()
     .select({ data: gameState.data, version: gameState.version })
     .from(gameState)
     .where(and(eq(gameState.sessionId, sessionId), eq(gameState.gameType, gameType)));
@@ -134,7 +136,7 @@ export async function getState<S>(gameType: string, sessionId: string): Promise<
 
 export async function initState<S>(gameType: string, sessionId: string, data: S): Promise<Stored<S>> {
   assertSize(data, "The game state");
-  await db.insert(gameState).values({ sessionId, gameType, data }).onConflictDoNothing();
+  await executor().insert(gameState).values({ sessionId, gameType, data }).onConflictDoNothing();
   return (await getState<S>(gameType, sessionId))!;
 }
 
@@ -145,7 +147,7 @@ export async function updateState<S>(
   expectedVersion: number
 ): Promise<Stored<S>> {
   assertSize(data, "The game state");
-  const [row] = await db
+  const [row] = await executor()
     .update(gameState)
     .set({ data, version: expectedVersion + 1, updatedAt: new Date() })
     .where(

@@ -189,6 +189,10 @@ Actions default to `POST`. Set `method: "GET"` for reads; input then comes from 
 
 To refuse a request, `throw new GameError(status, message)`. Anything else a handler throws is logged and returned as a generic 500, so internals never reach the client.
 
+**A session action is one transaction.** Everything a handler writes — state, turn, ending the game — is committed together when it returns. If it throws an unexpected error, all of it is rolled back, so a crash can never leave a game half-updated. Broadcasts and push notifications are held until the commit, so nobody is told about a change that didn't happen.
+
+One subtlety: a `GameError` is a reply, not a failure. Writes made before throwing one are **kept**. That lets a handler record something and still refuse the request — Chess records a loss on time, then tells the player why their move wasn't accepted. If you want nothing saved, throw before you write.
+
 ### The context
 
 | | |
@@ -408,5 +412,5 @@ A game can also export `CreatePage` (`/games/<gameType>/create`) and `LibraryPag
 - **Trusting the client.** Validate everything in the handler: whose turn it is, whether the move is legal, whether they've already acted. `access: "player"` tells you they are *a* player, not that it is *their* turn.
 - **Leaking through props.** `buildPlayProps` output is serialized into the page for everyone who can open it.
 - **Updating state without a version.** Read, then `update(..., { expectedVersion })` with the version you read.
-- **Broadcasting before saving.** Save first; if the save is refused, nothing should have been announced.
+- **Writing, then throwing a `GameError` you meant as a rollback.** A `GameError` keeps earlier writes. Do your checks first, then write.
 - **Reaching into core.** If you want something the SDK doesn't have, that's a core PR — not a deep import.

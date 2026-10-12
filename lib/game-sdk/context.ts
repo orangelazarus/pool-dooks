@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { sendPushToUsers } from "@/lib/push/send";
 import { GameError } from "./errors";
 import * as storage from "./storage";
+import { afterCommit, executor } from "./tx";
 import type {
   ContentApi,
   ContentContext,
@@ -98,9 +99,12 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
   const role: ViewerRole | null = isPlayer ? "player" : row.isPublic ? "observer" : null;
 
   const channel = () => supabase.channel(`session:${row.shareCode}`);
-  // Delivery problems must never fail the action that triggered them.
+  // Held until the action's transaction commits, so nobody hears about a
+  // change that gets rolled back. Delivery problems never fail the action.
   const send = (event: string, payload: unknown) =>
-    channel().send({ type: "broadcast", event, payload: { type: event, payload } }).then(() => {}, () => {});
+    afterCommit(() =>
+      channel().send({ type: "broadcast", event, payload: { type: event, payload } }).then(() => {}, () => {})
+    );
 
   return {
     gameType,
@@ -116,7 +120,7 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
     },
 
     async answers() {
-      return db
+      return executor()
         .select({
           tokenId: answers.tokenId,
           value: answers.value,
@@ -131,14 +135,14 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
     turn: {
       async set(playerId) {
         if (!players.some((p) => p.id === playerId)) throw new GameError(400, "That player isn't in this game");
-        await db.update(sessions).set({ currentPlayerId: playerId }).where(eq(sessions.id, row.id));
+        await executor().update(sessions).set({ currentPlayerId: playerId }).where(eq(sessions.id, row.id));
         session.currentPlayerId = playerId;
       },
     },
 
     async finish() {
       const completedAt = new Date();
-      const [done] = await db
+      const [done] = await executor()
         .update(sessions)
         .set({ status: "completed", completedAt })
         .where(and(eq(sessions.id, row.id), eq(sessions.status, "in_progress")))
@@ -163,11 +167,13 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
       const recipients = [...new Set(wanted)].filter((id) => players.some((p) => p.id === id));
       if (recipients.length === 0) return;
       const page = session.status === "completed" ? "reveal" : "play";
-      await sendPushToUsers(recipients, {
-        title: message.title.slice(0, MAX_PUSH_TITLE),
-        body: message.body.slice(0, MAX_PUSH_BODY),
-        url: `/sessions/${row.shareCode}/${page}`,
-      }).catch(() => {});
+      await afterCommit(() =>
+        sendPushToUsers(recipients, {
+          title: message.title.slice(0, MAX_PUSH_TITLE),
+          body: message.body.slice(0, MAX_PUSH_BODY),
+          url: `/sessions/${row.shareCode}/${page}`,
+        }).catch(() => {})
+      );
     },
   };
 }

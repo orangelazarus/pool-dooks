@@ -43,22 +43,8 @@ export async function POST(
       return NextResponse.json({ error: "Wrong token" }, { status: 400 });
     }
 
-    // Token may already be answered (repeated token id)
-    const [existing] = await db
-      .select()
-      .from(answers)
-      .where(and(eq(answers.sessionId, session.id), eq(answers.tokenId, parsed.data.tokenId)));
-
-    if (!existing) {
-      await db.insert(answers).values({
-        sessionId: session.id,
-        playerId: user.id,
-        tokenId: parsed.data.tokenId,
-        value: parsed.data.value,
-      });
-    }
-
-    const nextIndex = (session.currentTokenIndex ?? 0) + 1;
+    const currentIndex = session.currentTokenIndex ?? 0;
+    const nextIndex = currentIndex + 1;
     const isComplete = nextIndex >= tokenOrder.length;
     const plugin = getPlugin(session.gameType);
 
@@ -74,6 +60,46 @@ export async function POST(
     const currentPlayerIndex = players.findIndex((p) => p.playerId === user.id);
     const nextPlayerId = isComplete ? null : players[(currentPlayerIndex + 1) % players.length].playerId!;
     const nextTokenId = isComplete ? null : tokenOrder[nextIndex];
+    const completedAt = new Date();
+
+    // Record the answer and move the turn on as one step, and only if the turn
+    // is still where this request found it. A second copy of the same request
+    // (a double tap, a retry) finds the turn already taken and stops here,
+    // before anything is announced.
+    const recorded = await db.transaction(async (tx) => {
+      const [advanced] = await tx
+        .update(sessions)
+        .set(
+          isComplete
+            ? { status: "completed", completedAt, currentTokenIndex: nextIndex }
+            : { currentTokenIndex: nextIndex, currentPlayerId: nextPlayerId }
+        )
+        .where(
+          and(
+            eq(sessions.id, session.id),
+            eq(sessions.status, "in_progress"),
+            eq(sessions.currentTokenIndex, currentIndex),
+            eq(sessions.currentPlayerId, user.id)
+          )
+        )
+        .returning({ id: sessions.id });
+      if (!advanced) return null;
+
+      // A token id can repeat in the order; its first answer stands.
+      const [inserted] = await tx
+        .insert(answers)
+        .values({ sessionId: session.id, playerId: user.id, tokenId: parsed.data.tokenId, value: parsed.data.value })
+        .onConflictDoNothing()
+        .returning({ value: answers.value });
+      if (inserted) return inserted;
+
+      const [existing] = await tx
+        .select({ value: answers.value })
+        .from(answers)
+        .where(and(eq(answers.sessionId, session.id), eq(answers.tokenId, parsed.data.tokenId)));
+      return existing ?? { value: parsed.data.value };
+    });
+    if (!recorded) return NextResponse.json({ error: "That turn was already taken" }, { status: 409 });
 
     const hints = await plugin.getAnswerHints({
       session,
@@ -90,7 +116,7 @@ export async function POST(
       const [profile] = await db.select({ username: profiles.username }).from(profiles).where(eq(profiles.id, user.id));
       announced = {
         username: profile?.username ?? "A player",
-        value: existing?.value ?? parsed.data.value,
+        value: recorded.value,
         label: hints.answered.label,
         tokenType: hints.answered.type,
       };
@@ -107,12 +133,6 @@ export async function POST(
     }).catch(() => {});
 
     if (isComplete) {
-      const completedAt = new Date();
-      await db
-        .update(sessions)
-        .set({ status: "completed", completedAt, currentTokenIndex: nextIndex })
-        .where(eq(sessions.id, session.id));
-
       Promise.all([
         supabase.channel(`session:${code}`).send({
           type: "broadcast",
@@ -131,11 +151,6 @@ export async function POST(
         }),
       ]).catch(() => {});
     } else {
-      await db
-        .update(sessions)
-        .set({ currentTokenIndex: nextIndex, currentPlayerId: nextPlayerId })
-        .where(eq(sessions.id, session.id));
-
       const playUrl = `/sessions/${code}/play`;
       // The next player hears about the answer in their "your turn" push;
       // everyone else gets the answer on its own.
@@ -166,8 +181,8 @@ export async function POST(
 
     return NextResponse.json({ ok: true, isComplete });
   } catch (err) {
+    // Logged, not returned: a database error message is no business of the client's.
     console.error("[answer]", err);
-    const message = err instanceof Error ? err.message : "Failed to submit answer";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "Failed to submit answer" }, { status: 500 });
   }
 }
