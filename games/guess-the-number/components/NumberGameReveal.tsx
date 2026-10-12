@@ -32,7 +32,7 @@ export function NumberGameReveal({ title, secretNumber, min, max, rankings }: Nu
       </div>
 
       {winner && (
-        <div className="flex items-center justify-center gap-2 text-yellow-600">
+        <div className="flex items-center justify-center gap-2 text-primary">
           <Crown className="h-5 w-5" />
           <span className="font-semibold text-lg">
             {winner.distance === 0
@@ -50,7 +50,7 @@ export function NumberGameReveal({ title, secretNumber, min, max, rankings }: Nu
           {rankings.map((r, i) => (
             <div
               key={r.player}
-              className={`flex items-center gap-3 p-3 border rounded-lg ${i === 0 ? "bg-yellow-50 border-yellow-200" : "bg-muted/30"}`}
+              className={`flex items-center gap-3 p-3 border rounded-lg ${i === 0 ? "bg-primary/15 border-primary/60" : "bg-muted/30"}`}
             >
               <span className="text-sm font-bold text-muted-foreground w-5">#{i + 1}</span>
               <span className="font-medium flex-1">{r.player}</span>
