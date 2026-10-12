@@ -43,7 +43,7 @@ export const sessions = pgTable(
     hostId: uuid("host_id")
       .notNull()
       .references(() => profiles.id),
-    status: text("status").notNull().default("lobby"), // lobby | in_progress | completed
+    status: text("status").notNull().default("lobby"), // lobby | in_progress | completed | expired
     randomizeOrder: boolean("randomize_order").default(false),
     // Public sessions are listed on the home page: open to join while in the
     // lobby, open to watch once started.

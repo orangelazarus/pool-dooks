@@ -4,6 +4,7 @@ import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
 import { eq, count, and } from "drizzle-orm";
 import { createClient as createSupabaseAdmin } from "@/lib/supabase/server";
 import { isLobbyFull } from "@/lib/sessions/access";
+import { expireIfStale } from "@/lib/sessions/expiry";
 
 export async function POST(
   _req: NextRequest,
@@ -14,8 +15,10 @@ export async function POST(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [session] = await db.select().from(sessions).where(eq(sessions.shareCode, code));
-  if (!session) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+  const [found] = await db.select().from(sessions).where(eq(sessions.shareCode, code));
+  if (!found) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+  const session = await expireIfStale(found);
+  if (session.status === "expired") return NextResponse.json({ error: "This game expired" }, { status: 410 });
   if (session.status !== "lobby") {
     return NextResponse.json({ error: "Session already started" }, { status: 400 });
   }

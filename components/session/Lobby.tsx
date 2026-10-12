@@ -24,6 +24,8 @@ interface LobbyProps {
   subtitle: string;
   minPlayers: number;
   isPublic: boolean;
+  /** ISO time a public lobby closes if the game hasn't started; null if it never does. */
+  expiresAt: string | null;
   /** The lobby was already full: this viewer isn't a player and will watch the game. */
   isSpectator: boolean;
 }
@@ -37,12 +39,33 @@ export function Lobby({
   subtitle,
   minPlayers,
   isPublic,
+  expiresAt,
   isSpectator,
 }: LobbyProps) {
   const router = useRouter();
   const { status: pushStatus, subscribe } = usePushNotifications();
   const [starting, setStarting] = useState(false);
   const isHost = currentUserId === hostId;
+
+  // Counts a public lobby down to its closing time. At zero the page is
+  // reloaded, and the server (the only real timekeeper) shows it as expired.
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (!expiresAt) return;
+    const closesAt = new Date(expiresAt).getTime();
+    const tick = () => {
+      const left = Math.ceil((closesAt - Date.now()) / 1000);
+      setSecondsLeft(Math.max(0, left));
+      // A second's grace, so the server agrees the time is up.
+      if (left <= -1) {
+        clearInterval(id);
+        router.refresh();
+      }
+    };
+    const id = setInterval(tick, 1000);
+    tick();
+    return () => clearInterval(id);
+  }, [expiresAt, router]);
 
   const { state, handleEvent } = useGameState(
     initialPlayers.map((p) => ({
@@ -63,6 +86,11 @@ export function Lobby({
     setStarting(true);
     try {
       const res = await fetch(`/api/sessions/${shareCode}/start`, { method: "POST" });
+      if (res.status === 410) {
+        toast.error("This game expired");
+        router.refresh();
+        return;
+      }
       if (!res.ok) throw new Error();
       router.push(`/sessions/${shareCode}/play`);
     } catch {
@@ -87,6 +115,11 @@ export function Lobby({
           {isPublic ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
           {isPublic ? "Public — anyone can join or watch" : "Private — invite only"}
         </Badge>
+        {secondsLeft !== null && (
+          <p className={`text-xs mt-2 ${secondsLeft < 60 ? "text-destructive" : "text-muted-foreground"}`} data-expires-in={secondsLeft}>
+            Closes in {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")} unless the game starts
+          </p>
+        )}
       </div>
 
       <div className="mb-8">

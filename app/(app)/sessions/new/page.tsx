@@ -127,7 +127,7 @@ export default function NewSessionPage() {
                 </Label>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {isPublic
-                    ? "Listed on the home page: anyone can join, and anyone can watch once it starts"
+                    ? "Listed on the home page: anyone can join, and anyone can watch once it starts. Closes if it hasn't started in 15 minutes"
                     : "Only people you share the code with can join"}
                 </p>
               </div>
