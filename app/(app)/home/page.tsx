@@ -37,6 +37,7 @@ function OpenSessionList({
                 <p className="font-medium text-sm truncate">{s.gameDisplayName}</p>
                 <p className="text-xs text-muted-foreground truncate">
                   Hosted by {s.hostName} · {s.playerCount}/{s.maxPlayers} players
+                  {s.closesInMinutes !== null && ` · closes in ${s.closesInMinutes} min`}
                 </p>
               </div>
               <Link href={href(s)} className={buttonVariants({ variant: "outline", size: "sm" })}>

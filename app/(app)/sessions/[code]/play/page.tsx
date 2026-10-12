@@ -18,7 +18,8 @@ export default async function PlayPage({
 
   const [session] = await db.select().from(sessions).where(eq(sessions.shareCode, code));
   if (!session) redirect("/home");
-  if (session.status === "lobby") redirect(`/sessions/${code}`);
+  // The lobby page handles a lobby, and explains an expired one.
+  if (session.status === "lobby" || session.status === "expired") redirect(`/sessions/${code}`);
   if (session.status === "completed") redirect(`/sessions/${code}/reveal`);
 
   // Players play. Anyone else may watch a public game, and is turned away from

@@ -32,7 +32,7 @@ export interface ContentRecord<C> {
 
 export interface SessionInfo<C> {
   shareCode: string;
-  status: "lobby" | "in_progress" | "completed";
+  status: "lobby" | "in_progress" | "completed" | "expired";
   hostId: string;
   isPublic: boolean;
   /** Whose turn it is, or null before the game starts. */

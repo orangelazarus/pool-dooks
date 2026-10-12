@@ -25,7 +25,7 @@ Standard two-player chess with full rules, including castling, en passant, promo
 ## How It Works
 
 - **Pick a game** from the home page and set it up
-- **Invite people or open it up** — share the 6-character code for a private game, or mark the game **public** so it's listed on the home page for anyone to join
+- **Invite people or open it up** — share the 6-character code for a private game, or mark the game **public** so it's listed on the home page for anyone to join. A public game that hasn't started within 15 minutes is closed
 - **No account needed** — visitors pick a name and play as a guest, or sign in to keep a profile
 - **Play in real time** — Supabase Realtime keeps everyone in sync, with push notifications when it's your turn
 - **Watch** — public games can be watched by anyone once they've started; when a public lobby is full, extra arrivals become spectators

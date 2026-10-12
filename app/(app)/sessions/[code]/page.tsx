@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { Lobby } from "@/components/session/Lobby";
 import { GuestJoin } from "@/components/session/GuestJoin";
 import { SessionNotice } from "@/components/session/SessionNotice";
+import { EXPIRED_MESSAGE, expireIfStale, lobbyExpiresAt } from "@/lib/sessions/expiry";
 import { getPlugin } from "@/lib/games/registry";
 
 export default async function SessionPage({
@@ -16,9 +17,13 @@ export default async function SessionPage({
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
-  const [session] = await db.select().from(sessions).where(eq(sessions.shareCode, code));
-  if (!session) redirect("/home");
+  const [found] = await db.select().from(sessions).where(eq(sessions.shareCode, code));
+  if (!found) redirect("/home");
+  const session = await expireIfStale(found);
 
+  if (session.status === "expired") {
+    return <SessionNotice title="This game expired" message={EXPIRED_MESSAGE} />;
+  }
   if (session.status === "in_progress") redirect(`/sessions/${code}/play`);
   if (session.status === "completed") redirect(`/sessions/${code}/reveal`);
 
@@ -84,6 +89,7 @@ export default async function SessionPage({
       subtitle={subtitle}
       minPlayers={plugin.minPlayers}
       isPublic={session.isPublic}
+      expiresAt={lobbyExpiresAt(session)?.toISOString() ?? null}
       isSpectator={isSpectator}
     />
   );
