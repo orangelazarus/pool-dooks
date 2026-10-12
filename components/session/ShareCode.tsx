@@ -31,7 +31,7 @@ export function ShareCode({ code }: { code: string }) {
           onClick={handleCopy}
           className="h-12 w-12"
         >
-          {copied ? <Check className="h-5 w-5 text-green-500" /> : <Copy className="h-5 w-5" />}
+          {copied ? <Check className="h-5 w-5 text-secondary" /> : <Copy className="h-5 w-5" />}
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">

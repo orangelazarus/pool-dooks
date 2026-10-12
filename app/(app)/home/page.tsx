@@ -74,7 +74,8 @@ export default async function HomePage() {
               <CardTitle>{plugin.displayName}</CardTitle>
               <CardDescription>{plugin.description}</CardDescription>
             </CardHeader>
-            <CardContent>
+            {/* mt-auto: the button sits at the bottom however long the description runs */}
+            <CardContent className="mt-auto">
               <Link href={plugin.browsePath} className={cn(buttonVariants(), "w-full")}>
                 Play
               </Link>
