@@ -157,7 +157,7 @@ export function GameBoard({
                 isCurrent
                   ? "border-primary bg-primary/5 shadow-sm"
                   : isAnswered
-                  ? "border-green-200 bg-green-50 opacity-60"
+                  ? "border-secondary/60 bg-secondary/15"
                   : "border-border bg-muted/30"
               }`}
             >
@@ -180,7 +180,7 @@ export function GameBoard({
                 )}
               </span>
               {isAnswered && (
-                <span className="text-green-600 text-xs">✓</span>
+                <span className="text-secondary text-xs">✓</span>
               )}
               {isCurrent && (
                 <Badge variant="secondary" className="text-xs">Now</Badge>
@@ -224,7 +224,7 @@ export function GameBoard({
                 </Button>
               </div>
               {hint && (
-                <p className="text-xs text-amber-600 flex items-center gap-1">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
                   <span>⚠</span> {hint}
                 </p>
               )}

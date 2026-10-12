@@ -46,7 +46,7 @@ export function RevealDisplay({ title, resultText, answersWithMeta }: RevealDisp
                 key={i}
                 initial={{ opacity: 0, y: -4, scale: 0.9 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                className="inline-block mx-0.5 px-2 py-0.5 bg-yellow-200 text-yellow-900 rounded font-bold border border-yellow-300"
+                className="inline-block mx-0.5 px-2 py-0.5 bg-primary text-primary-foreground rounded font-bold border border-primary"
               >
                 {value}
               </motion.span>

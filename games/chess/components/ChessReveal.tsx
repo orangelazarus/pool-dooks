@@ -35,7 +35,7 @@ export function ChessReveal({ title, timeControlSeconds, white, black, moves, re
       </div>
 
       {result && resultReason && (
-        <div className="flex items-center justify-center gap-2 text-yellow-600">
+        <div className="flex items-center justify-center gap-2 text-primary">
           {result === "draw" ? <Handshake className="h-5 w-5" /> : <Crown className="h-5 w-5" />}
           <span className="font-semibold text-lg">{describeResult(result, resultReason, { white, black })}</span>
         </div>
