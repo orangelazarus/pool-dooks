@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
 import { eq, count, and } from "drizzle-orm";
 import { createClient as createSupabaseAdmin } from "@/lib/supabase/server";
-import { isLobbyFull } from "@/lib/sessions/access";
+import { getPlugin } from "@/lib/games/registry";
 import { expireIfStale } from "@/lib/sessions/expiry";
 
 export async function POST(
@@ -23,36 +23,39 @@ export async function POST(
     return NextResponse.json({ error: "Session already started" }, { status: 400 });
   }
 
-  // Check if already joined
-  const [existing] = await db
-    .select()
-    .from(sessionPlayers)
-    .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.playerId, user.id)));
+  // Decided under a lock on the session row, so two people arriving at the
+  // same moment can't both take the last seat or the same join order.
+  const outcome = await db.transaction(async (tx) => {
+    const [locked] = await tx.select().from(sessions).where(eq(sessions.id, session.id)).for("update");
+    if (!locked || locked.status !== "lobby") return "started" as const;
 
-  if (existing) {
-    // Reactivate if was inactive
-    await db
-      .update(sessionPlayers)
-      .set({ isActive: true })
-      .where(eq(sessionPlayers.id, existing.id));
-    return NextResponse.json({ ok: true });
-  }
+    const [existing] = await tx
+      .select()
+      .from(sessionPlayers)
+      .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.playerId, user.id)));
+    if (existing) {
+      // Reactivate if was inactive. Existing players can always return.
+      await tx.update(sessionPlayers).set({ isActive: true }).where(eq(sessionPlayers.id, existing.id));
+      return "rejoined" as const;
+    }
 
-  // Checked after the already-joined case so existing players can always return.
-  if (await isLobbyFull(session)) {
-    return NextResponse.json({ error: "Lobby is full" }, { status: 409 });
-  }
+    const [{ count: playerCount }] = await tx
+      .select({ count: count() })
+      .from(sessionPlayers)
+      .where(eq(sessionPlayers.sessionId, session.id));
+    if (Number(playerCount) >= getPlugin(session.gameType).maxPlayers) return "full" as const;
 
-  const [{ count: playerCount }] = await db
-    .select({ count: count() })
-    .from(sessionPlayers)
-    .where(eq(sessionPlayers.sessionId, session.id));
-
-  await db.insert(sessionPlayers).values({
-    sessionId: session.id,
-    playerId: user.id,
-    joinOrder: Number(playerCount),
+    await tx.insert(sessionPlayers).values({
+      sessionId: session.id,
+      playerId: user.id,
+      joinOrder: Number(playerCount),
+    });
+    return "joined" as const;
   });
+
+  if (outcome === "started") return NextResponse.json({ error: "Session already started" }, { status: 400 });
+  if (outcome === "full") return NextResponse.json({ error: "Lobby is full" }, { status: 409 });
+  if (outcome === "rejoined") return NextResponse.json({ ok: true });
 
   // Broadcast player:joined event via Supabase Realtime
   const profile = await db.select().from(profiles).where(eq(profiles.id, user.id));

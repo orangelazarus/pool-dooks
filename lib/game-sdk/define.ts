@@ -9,6 +9,7 @@ import type { GamePlugin } from "@/lib/games/types";
 import { buildContentContext, buildSessionContext } from "./context";
 import { getContent } from "./storage";
 import { GameError } from "./errors";
+import { runInTransaction } from "./tx";
 import type { ContentAction, GameDefinition, SessionAction } from "./types";
 
 const GAME_TYPE = /^[a-z][a-z0-9_]*$/;
@@ -77,7 +78,9 @@ async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path
 
       const input = await readInput(req, action);
       if (!input.ok) return input.response;
-      return NextResponse.json((await action.handler(ctx, input.value)) ?? { ok: true });
+      // All of the handler's writes commit together; realtime and push go out after.
+      const result = await runInTransaction(() => action.handler(ctx, input.value));
+      return NextResponse.json(result ?? { ok: true });
     }
 
     return fail(404, "Not found");
