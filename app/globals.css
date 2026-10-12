@@ -2,7 +2,8 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* `dark:` utilities follow the device setting, matching the variables below. */
+@custom-variant dark (@media (prefers-color-scheme: dark));
 
 @theme inline {
   --color-background: var(--background);
@@ -27,6 +28,11 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  /* Text in the primary or destructive color uses the legible shade; fills and borders keep the brand color. */
+  --text-color-primary: var(--primary-text);
+  --text-color-secondary: var(--secondary-text);
+  --text-color-destructive: var(--destructive-text);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -48,73 +54,94 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * Color scheme. Five brand colors, each with one job:
+ *
+ *   #e5e059 yellow  primary      main buttons, current-turn and "now" markers
+ *   #bdd358 lime    secondary    secondary badges, done / success states
+ *   #ffffff white   background   page, cards, popovers
+ *   #999799 gray    neutral      rings and borders; basis for muted surfaces and text
+ *   #e5625e coral   destructive  resign, busts, errors, warnings
+ *
+ * Everything else here is a tint or shade derived from those. Two derived
+ * values exist purely for legibility: yellow and coral are too light to read
+ * as small text on white, and so is lime, so text in those colors uses a darker
+ * shade (--primary-text, --secondary-text, --destructive-text) while fills and borders use the exact
+ * brand color. Text on a yellow, lime or coral fill is near-black.
+ */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  color-scheme: light dark;
+
+  --background: #ffffff;
+  --foreground: #1c1b1c;
+  --card: #ffffff;
+  --card-foreground: #1c1b1c;
+  --popover: #ffffff;
+  --popover-foreground: #1c1b1c;
+  --primary: #e5e059;
+  --primary-foreground: #1f1e0a;
+  --primary-text: #66640f;
+  --secondary: #bdd358;
+  --secondary-foreground: #1b2006;
+  --secondary-text: #55641a;
+  --muted: #f4f3f4;
+  --muted-foreground: #6a686a;
+  --accent: #eef4d2;
+  --accent-foreground: #1b2006;
+  --destructive: #e5625e;
+  --destructive-foreground: #2a0f0e;
+  --destructive-text: #bf3a36;
+  --border: #e0dfe0;
+  --input: #cfcecf;
+  --ring: #999799;
+  --chart-1: #e5e059;
+  --chart-2: #bdd358;
+  --chart-3: #999799;
+  --chart-4: #e5625e;
+  --chart-5: #6a686a;
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: #f4f3f4;
+  --sidebar-foreground: #1c1b1c;
+  --sidebar-primary: #e5e059;
+  --sidebar-primary-foreground: #1f1e0a;
+  --sidebar-accent: #eef4d2;
+  --sidebar-accent-foreground: #1b2006;
+  --sidebar-border: #e0dfe0;
+  --sidebar-ring: #999799;
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+/* Dark follows the device's setting; there is no in-app toggle. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #1a191a;
+    --foreground: #f5f4f5;
+    --card: #232223;
+    --card-foreground: #f5f4f5;
+    --popover: #232223;
+    --popover-foreground: #f5f4f5;
+    --primary: #e5e059;
+    --primary-foreground: #1f1e0a;
+    --primary-text: #e5e059;
+    --secondary: #bdd358;
+    --secondary-foreground: #1b2006;
+    --secondary-text: #bdd358;
+    --muted: #2c2b2c;
+    --muted-foreground: #999799;
+    --accent: #343a1c;
+    --accent-foreground: #f5f4f5;
+    --destructive: #e5625e;
+    --destructive-foreground: #2a0f0e;
+    --destructive-text: #e5625e;
+    --border: rgb(255 255 255 / 12%);
+    --input: rgb(255 255 255 / 16%);
+    --ring: #999799;
+    --chart-5: #cfcecf;
+    --sidebar: #232223;
+    --sidebar-foreground: #f5f4f5;
+    --sidebar-accent: #343a1c;
+    --sidebar-accent-foreground: #f5f4f5;
+    --sidebar-border: rgb(255 255 255 / 12%);
+  }
 }
 
 @layer base {
