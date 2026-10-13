@@ -5,12 +5,14 @@ import { plugin as plugin_chess } from "../../games/chess/plugin";
 import { plugin as plugin_farkle } from "../../games/farkle/plugin";
 import { plugin as plugin_guess_the_number } from "../../games/guess-the-number/plugin";
 import { plugin as plugin_pool_dooks } from "../../games/pool-dooks/plugin";
+import { plugin as plugin_subterfuge } from "../../games/subterfuge/plugin";
 
 const registry = new Map<string, GamePlugin>([
   [plugin_chess.gameType, plugin_chess],
   [plugin_farkle.gameType, plugin_farkle],
   [plugin_guess_the_number.gameType, plugin_guess_the_number],
   [plugin_pool_dooks.gameType, plugin_pool_dooks],
+  [plugin_subterfuge.gameType, plugin_subterfuge],
 ]);
 
 export function getPlugin(gameType: string): GamePlugin {
