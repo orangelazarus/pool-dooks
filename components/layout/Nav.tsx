@@ -12,6 +12,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { LogOut, User } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Logo } from "./Logo";
 
 interface NavProps {
   user: { id: string; email?: string } | null;
@@ -33,7 +34,7 @@ export function Nav({ user, profile }: NavProps) {
     <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
       <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
         <Link href="/" className="flex items-center gap-2 font-bold text-lg shrink-0">
-          <span className="text-2xl">📖</span>
+          <Logo className="text-2xl" />
           <span className="hidden sm:inline">Pool Dooks</span>
         </Link>
 
