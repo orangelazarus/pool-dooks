@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import { defineGame, GameError, type SessionContext } from "@/lib/game-sdk";
+import { defineGame, GameError, StateConflictError, type SessionContext } from "@/lib/game-sdk";
 import {
   CreateSchema,
   LieSchema,
@@ -40,20 +40,38 @@ async function load(ctx: Ctx) {
 
 const everyone = (ctx: Ctx, ids: string[]) => ctx.session.players.every((p) => ids.includes(p.id));
 
-/** Saves the new state, nudges every open browser, and returns the caller's view of it. */
-async function commit(ctx: Ctx, next: SubterfugeState, version: number) {
-  await ctx.state.update(next, { expectedVersion: version });
-  const payload: ChangedPayload = { round: next.round, phase: next.phase, actedIds: actedIds(next) };
-  await ctx.broadcast("changed", payload);
-  return viewFor(next, ctx.viewer!.id);
-}
+// Everyone acts at once here, so two players' writes often meet. The loser of
+// that race simply goes again on the newer state instead of being turned away.
+const MAX_ATTEMPTS = 5;
 
-async function announceGuessing(ctx: Ctx) {
-  await ctx.notify("others", { title: "Subterfuge", body: "The lies are in — can you spot the truth?" });
-}
+const PHASE_PUSH: Record<SubterfugeState["phase"], string> = {
+  lying: "Next question — time to write a lie.",
+  guessing: "The lies are in — can you spot the truth?",
+  results: "Everyone has guessed — see who fooled who!",
+};
 
-async function announceResults(ctx: Ctx) {
-  await ctx.notify("others", { title: "Subterfuge", body: "Everyone has guessed — see who fooled who!" });
+/**
+ * Applies `change` to the latest state, nudges every open browser, and returns
+ * the caller's view. `change` must be pure — it runs again if another player's
+ * write lands first — and refuses a request by throwing a GameError.
+ */
+async function apply(ctx: Ctx, change: (state: SubterfugeState) => SubterfugeState) {
+  for (let attempt = 1; ; attempt++) {
+    const { state, version } = await load(ctx);
+    const next = change(state);
+    if (next === state) return viewFor(state, ctx.viewer!.id);
+    try {
+      await ctx.state.update(next, { expectedVersion: version });
+    } catch (err) {
+      if (err instanceof StateConflictError && attempt < MAX_ATTEMPTS) continue;
+      throw err;
+    }
+
+    const payload: ChangedPayload = { round: next.round, phase: next.phase, actedIds: actedIds(next) };
+    await ctx.broadcast("changed", payload);
+    if (next.phase !== state.phase) await ctx.notify("others", { title: "Subterfuge", body: PHASE_PUSH[next.phase] });
+    return viewFor(next, ctx.viewer!.id);
+  }
 }
 
 export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
@@ -128,20 +146,17 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
       access: "player",
       input: LieSchema,
       handler: async (ctx, { text }: z.infer<typeof LieSchema>) => {
-        const { state, version } = await load(ctx);
         const me = ctx.viewer!.id;
-        if (state.phase !== "lying") throw new GameError(400, "It's too late to write a lie for this question");
-        if (state.lies[me]) throw new GameError(400, "You've already written your lie");
-        if (isTruth(getQuestion(state.questionIds[state.round]), text)) {
-          throw new GameError(400, "That's the actual answer! Write a lie instead.");
-        }
+        return apply(ctx, (state) => {
+          if (state.phase !== "lying") throw new GameError(400, "It's too late to write a lie for this question");
+          if (state.lies[me]) throw new GameError(400, "You've already written your lie");
+          if (isTruth(getQuestion(state.questionIds[state.round]), text)) {
+            throw new GameError(400, "That's the actual answer! Write a lie instead.");
+          }
 
-        let next: SubterfugeState = { ...state, lies: { ...state.lies, [me]: clean(text) } };
-        if (everyone(ctx, Object.keys(next.lies))) {
-          next = openGuessing(next);
-          await announceGuessing(ctx);
-        }
-        return commit(ctx, next, version);
+          const next: SubterfugeState = { ...state, lies: { ...state.lies, [me]: clean(text) } };
+          return everyone(ctx, Object.keys(next.lies)) ? openGuessing(next) : next;
+        });
       },
     },
 
@@ -149,20 +164,17 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
       access: "player",
       input: PickSchema,
       handler: async (ctx, { choiceId }: z.infer<typeof PickSchema>) => {
-        const { state, version } = await load(ctx);
         const me = ctx.viewer!.id;
-        if (state.phase !== "guessing") throw new GameError(400, "There's nothing to pick right now");
-        if (state.picks[me]) throw new GameError(400, "You've already picked");
-        const choice = state.choices.find((c) => c.id === choiceId);
-        if (!choice) throw new GameError(400, "That isn't one of the choices");
-        if (choice.authorIds.includes(me)) throw new GameError(400, "You can't pick your own lie");
+        return apply(ctx, (state) => {
+          if (state.phase !== "guessing") throw new GameError(400, "There's nothing to pick right now");
+          if (state.picks[me]) throw new GameError(400, "You've already picked");
+          const choice = state.choices.find((c) => c.id === choiceId);
+          if (!choice) throw new GameError(400, "That isn't one of the choices");
+          if (choice.authorIds.includes(me)) throw new GameError(400, "You can't pick your own lie");
 
-        let next: SubterfugeState = { ...state, picks: { ...state.picks, [me]: choiceId } };
-        if (everyone(ctx, Object.keys(next.picks))) {
-          next = closeRound(next);
-          await announceResults(ctx);
-        }
-        return commit(ctx, next, version);
+          const next: SubterfugeState = { ...state, picks: { ...state.picks, [me]: choiceId } };
+          return everyone(ctx, Object.keys(next.picks)) ? closeRound(next) : next;
+        });
       },
     },
 
@@ -171,18 +183,16 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
       access: "player",
       input: StepSchema,
       handler: async (ctx, step: z.infer<typeof StepSchema>) => {
-        const { state, version } = await load(ctx);
-        const me = ctx.viewer!.id;
-        // Someone else already moved the game on: just show where it is now.
-        if (step.round !== state.round || state.phase !== "results") return viewFor(state, me);
+        const { state } = await load(ctx);
+        // Someone else already moved the game on: apply() just shows where it is now.
+        const current = (s: SubterfugeState) => step.round === s.round && s.phase === "results";
 
-        if (isLastRound(state)) {
+        if (current(state) && isLastRound(state)) {
           await ctx.finish();
           await ctx.notify("others", { title: "Subterfuge finished!", body: "The final scores are in — come see who won!" });
-          return { ...viewFor(state, me), finished: true };
+          return { ...viewFor(state, ctx.viewer!.id), finished: true };
         }
-        await ctx.notify("others", { title: "Subterfuge", body: "Next question — time to write a lie." });
-        return commit(ctx, nextRound(state), version);
+        return apply(ctx, (s) => (current(s) ? nextRound(s) : s));
       },
     },
 
@@ -191,26 +201,24 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
       access: "player",
       input: StepSchema,
       handler: async (ctx, step: z.infer<typeof StepSchema>) => {
-        const { state, version } = await load(ctx);
-        const me = ctx.viewer!.id;
-        if (me !== ctx.session.hostId) throw new GameError(403, "Only the host can skip ahead");
-        if (step.round !== state.round || step.phase !== state.phase) return viewFor(state, me);
+        if (ctx.viewer!.id !== ctx.session.hostId) throw new GameError(403, "Only the host can skip ahead");
+        return apply(ctx, (state) => {
+          if (step.round !== state.round || step.phase !== state.phase) return state;
 
-        if (state.phase === "lying") {
-          if (Object.keys(state.lies).length < MIN_LIES_TO_SKIP) {
-            throw new GameError(400, `Wait for at least ${MIN_LIES_TO_SKIP} lies first`);
+          if (state.phase === "lying") {
+            if (Object.keys(state.lies).length < MIN_LIES_TO_SKIP) {
+              throw new GameError(400, `Wait for at least ${MIN_LIES_TO_SKIP} lies first`);
+            }
+            return openGuessing(state);
           }
-          await announceGuessing(ctx);
-          return commit(ctx, openGuessing(state), version);
-        }
-        if (state.phase === "guessing") {
-          if (Object.keys(state.picks).length < MIN_PICKS_TO_SKIP) {
-            throw new GameError(400, "Wait for at least one guess first");
+          if (state.phase === "guessing") {
+            if (Object.keys(state.picks).length < MIN_PICKS_TO_SKIP) {
+              throw new GameError(400, "Wait for at least one guess first");
+            }
+            return closeRound(state);
           }
-          await announceResults(ctx);
-          return commit(ctx, closeRound(state), version);
-        }
-        throw new GameError(400, "Nothing to skip");
+          throw new GameError(400, "Nothing to skip");
+        });
       },
     },
 
