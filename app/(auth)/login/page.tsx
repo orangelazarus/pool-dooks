@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { Logo } from "@/components/layout/Logo";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -54,7 +55,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center px-4 bg-muted/30">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <div className="text-4xl mb-2">📖</div>
+          <div className="mb-2"><Logo className="text-4xl" /></div>
           <CardTitle>Welcome back</CardTitle>
           <CardDescription>Sign in to your Pool Dooks account</CardDescription>
         </CardHeader>
