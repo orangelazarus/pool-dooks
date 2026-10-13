@@ -7,6 +7,8 @@ export const ROUND_OPTIONS = [5, 8, 10] as const;
 /** Content row: the settings the host picked at creation time. */
 export interface SubterfugeContent {
   rounds: number;
+  /** Pad a short list of choices with ready-made lies. Missing on older rows, which had them on. */
+  decoys?: boolean;
 }
 
 // lying — everyone writes a lie · guessing — everyone picks · results — the truth is out
@@ -76,6 +78,7 @@ export interface ChangedPayload {
 
 export const CreateSchema = z.object({
   rounds: z.union([z.literal(5), z.literal(8), z.literal(10)]),
+  decoys: z.boolean().default(true),
 });
 
 export const LieSchema = z.object({
