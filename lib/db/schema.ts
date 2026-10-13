@@ -125,6 +125,22 @@ export const answers = pgTable(
   ]
 );
 
+// One chat per session, from the lobby through to the reveal. Players write;
+// spectators of a public session may read. See drizzle/0011_session_chat.sql.
+export const sessionMessages = pgTable(
+  "session_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    playerId: uuid("player_id").references(() => profiles.id, { onDelete: "set null" }),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_session_messages_session").on(t.sessionId, t.createdAt)]
+);
+
 export const pushSubscriptions = pgTable(
   "push_subscriptions",
   {
@@ -145,4 +161,5 @@ export type Profile = typeof profiles.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type SessionPlayer = typeof sessionPlayers.$inferSelect;
 export type Answer = typeof answers.$inferSelect;
+export type SessionMessage = typeof sessionMessages.$inferSelect;
 export type PushSubscription = typeof pushSubscriptions.$inferSelect;
