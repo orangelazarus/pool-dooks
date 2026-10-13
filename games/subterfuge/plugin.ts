@@ -40,6 +40,10 @@ async function load(ctx: Ctx) {
 
 const everyone = (ctx: Ctx, ids: string[]) => ctx.session.players.every((p) => ids.includes(p.id));
 
+// Games created before the setting existed always had decoys.
+const usesDecoys = (data: SubterfugeContent) => data.decoys !== false;
+const describe = (data: SubterfugeContent) => `${data.rounds} questions${usesDecoys(data) ? "" : " · no decoys"}`;
+
 // Everyone acts at once here, so two players' writes often meet. The loser of
 // that race simply goes again on the newer state instead of being turned away.
 const MAX_ATTEMPTS = 5;
@@ -82,7 +86,7 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
   maxPlayers: 8,
 
   async getLobbyMeta(ctx) {
-    return { subtitle: `${ctx.session.content.data.rounds} questions` };
+    return { subtitle: describe(ctx.session.content.data) };
   },
 
   async start(ctx) {
@@ -128,14 +132,15 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
           id: game.id,
           title: game.title,
           rounds: game.data.rounds,
+          decoys: usesDecoys(game.data),
         })),
     },
 
     create: {
       auth: "user",
       input: CreateSchema,
-      handler: async (ctx, { rounds }: z.infer<typeof CreateSchema>) => {
-        const game = await ctx.content.create({ title: `Subterfuge — ${rounds} questions`, data: { rounds } });
+      handler: async (ctx, data: z.infer<typeof CreateSchema>) => {
+        const game = await ctx.content.create({ title: `Subterfuge — ${describe(data)}`, data });
         return { id: game.id };
       },
     },
@@ -155,7 +160,7 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
           }
 
           const next: SubterfugeState = { ...state, lies: { ...state.lies, [me]: clean(text) } };
-          return everyone(ctx, Object.keys(next.lies)) ? openGuessing(next) : next;
+          return everyone(ctx, Object.keys(next.lies)) ? openGuessing(next, usesDecoys(ctx.session.content.data)) : next;
         });
       },
     },
@@ -209,7 +214,7 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
             if (Object.keys(state.lies).length < MIN_LIES_TO_SKIP) {
               throw new GameError(400, `Wait for at least ${MIN_LIES_TO_SKIP} lies first`);
             }
-            return openGuessing(state);
+            return openGuessing(state, usesDecoys(ctx.session.content.data));
           }
           if (state.phase === "guessing") {
             if (Object.keys(state.picks).length < MIN_PICKS_TO_SKIP) {

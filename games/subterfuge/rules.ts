@@ -69,9 +69,10 @@ export function actedIds(state: SubterfugeState): string[] {
 
 /**
  * Lying is over: the truth and the lies become one shuffled list. Identical
- * lies share a choice; a decoy is a lie nobody wrote, so it has no authors.
+ * lies share a choice. With `decoys`, a short list is padded out with lies
+ * nobody wrote, which therefore have no authors.
  */
-export function openGuessing(state: SubterfugeState): SubterfugeState {
+export function openGuessing(state: SubterfugeState, decoys: boolean): SubterfugeState {
   const question = getQuestion(state.questionIds[state.round]);
   const lies = new Map<string, { text: string; authorIds: string[] }>();
   for (const [playerId, text] of Object.entries(state.lies)) {
@@ -81,16 +82,16 @@ export function openGuessing(state: SubterfugeState): SubterfugeState {
     else lies.set(key, { text, authorIds: [playerId] });
   }
 
-  const decoys: string[] = [];
-  for (const suggestion of shuffle(question.suggestions ?? [])) {
-    if (1 + lies.size + decoys.length >= MIN_CHOICES) break;
-    if (!lies.has(normalize(suggestion)) && !isTruth(question, suggestion)) decoys.push(clean(suggestion));
+  const padding: string[] = [];
+  for (const suggestion of decoys ? shuffle(question.suggestions ?? []) : []) {
+    if (1 + lies.size + padding.length >= MIN_CHOICES) break;
+    if (!lies.has(normalize(suggestion)) && !isTruth(question, suggestion)) padding.push(clean(suggestion));
   }
 
   const choices: Choice[] = shuffle([
     { text: clean(question.answer), authorIds: [] as string[], isTruth: true },
     ...[...lies.values()].map((lie) => ({ ...lie, isTruth: false })),
-    ...decoys.map((text) => ({ text, authorIds: [] as string[], isTruth: false })),
+    ...padding.map((text) => ({ text, authorIds: [] as string[], isTruth: false })),
   ]).map((choice, i) => ({ id: `c${i}`, ...choice }));
 
   return { ...state, phase: "guessing", choices, picks: {} };

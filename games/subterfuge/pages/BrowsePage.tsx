@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Gamepad2, VenetianMask } from "lucide-react";
@@ -14,12 +15,14 @@ interface SubterfugeGame {
   id: string;
   title: string;
   rounds: number;
+  decoys: boolean;
 }
 
 export default function BrowsePage() {
   const router = useRouter();
   const [games, setGames] = useState<SubterfugeGame[]>([]);
   const [rounds, setRounds] = useState<number>(8);
+  const [decoys, setDecoys] = useState(true);
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
@@ -33,7 +36,7 @@ export default function BrowsePage() {
   const handleCreate = async () => {
     setCreating(true);
     try {
-      const data = await contentAction<{ id: string }>("subterfuge", "create", { rounds });
+      const data = await contentAction<{ id: string }>("subterfuge", "create", { rounds, decoys });
       play(data.id);
     } catch {
       toast.error("Failed to create game");
@@ -76,6 +79,19 @@ export default function BrowsePage() {
             </Select>
           </div>
 
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label htmlFor="decoys" className="cursor-pointer">
+                Decoys
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                With few players, add ready-made lies so there are always four choices. Off, the choices are only the
+                truth and what players wrote.
+              </p>
+            </div>
+            <Switch id="decoys" checked={decoys} onCheckedChange={setDecoys} />
+          </div>
+
           <ul className="text-xs text-muted-foreground space-y-1 list-disc pl-4">
             <li>1000 points for picking the truth</li>
             <li>500 points for every player your lie fools</li>
@@ -98,7 +114,9 @@ export default function BrowsePage() {
                 <CardContent className="p-4 flex items-center justify-between gap-3">
                   <div>
                     <p className="font-medium text-sm">{g.title}</p>
-                    <p className="text-xs text-muted-foreground">{g.rounds} questions</p>
+                    <p className="text-xs text-muted-foreground">
+                      {g.rounds} questions{g.decoys ? "" : " · no decoys"}
+                    </p>
                   </div>
                   <Button size="sm" variant="outline" onClick={() => play(g.id)}>
                     Play
