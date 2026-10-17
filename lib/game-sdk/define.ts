@@ -66,14 +66,15 @@ async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path
       if (!row || row.gameType !== def.gameType) return fail(404, "Session not found");
 
       const ctx = await buildSessionContext<C, S>(def.gameType, row);
-      if (action.access === "player") {
+      if (action.access === "player" || action.access === "host") {
         if (!ctx.viewer) return fail(401, "Unauthorized");
         if (ctx.role !== "player") return fail(403, "Not a player in this game");
+        if (action.access === "host" && ctx.viewer.id !== row.hostId) return fail(403, "Only the host can do that");
       } else if (!ctx.role) {
         return fail(403, "This game is private");
       }
 
-      const when = action.when ?? (action.access === "player" ? "in_progress" : "any");
+      const when = action.when ?? (action.access === "viewer" ? "any" : "in_progress");
       if (when === "in_progress" && row.status !== "in_progress") return fail(400, "Session not in progress");
 
       const input = await readInput(req, action);

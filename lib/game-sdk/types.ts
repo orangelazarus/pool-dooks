@@ -89,6 +89,14 @@ export interface StateApi<S> {
    * throws StateConflictError (→ 409), so a double-submitted action can't apply twice.
    */
   update(data: S, options: { expectedVersion: number }): Promise<{ data: S; version: number }>;
+  /**
+   * Reads the state, applies `change`, and writes the result, reading and
+   * applying again if another request's write lands in between. `change` must
+   * depend only on the state it is given, since it may run more than once,
+   * and refuses by throwing a GameError. Returning the same object writes
+   * nothing. Throws GameError(500) if the session has no state.
+   */
+  mutate(change: (data: S) => S, options?: { attempts?: number }): Promise<{ data: S; version: number; changed: boolean }>;
 }
 
 export interface PushMessage {
@@ -153,10 +161,11 @@ export interface ContentAction<C, I = unknown> extends ActionBase<I> {
 export interface SessionAction<C, S, I = unknown> extends ActionBase<I> {
   /**
    * player — only this session's players
+   * host   — only the session's host
    * viewer — players, plus observers when the session is public
    */
-  access: "player" | "viewer";
-  /** Session status the action needs. Default: "in_progress" for player actions, "any" for viewer actions. */
+  access: "player" | "host" | "viewer";
+  /** Session status the action needs. Default: "in_progress" for player and host actions, "any" for viewer actions. */
   when?: "in_progress" | "any";
   handler(ctx: SessionContext<C, S>, input: I): Promise<unknown>;
 }
