@@ -426,6 +426,46 @@ A game can also export `CreatePage` (`/games/<gameType>/create`) and `LibraryPag
 
 ---
 
+## Timed games
+
+Core can offer the host a timer and fire deadlines for you. Nothing runs on a schedule. A deadline fires when an open browser's countdown reaches zero, or when the next request touches the session, whichever comes first, and it always fires exactly once.
+
+Declare the choices, and handle the deadline:
+
+```ts
+defineGame<MyContent, MyState>({
+  // …
+  timer: { options: [30, 60, 90], label: "Time to answer" }, // the host may also pick "Off"
+
+  async start(ctx) {
+    await ctx.state.init(initialState);
+    if (ctx.session.timerSeconds) await ctx.deadline.set(ctx.session.timerSeconds * 1000, "answering");
+  },
+
+  // Runs once, in its own transaction, before anything else sees the session.
+  async onDeadline(ctx, key) {
+    if (key === "answering") await ctx.state.mutate((s) => closeAnswering(s));
+    await ctx.broadcast("changed", {});
+  },
+});
+```
+
+- `ctx.session.timerSeconds` is the host's choice, or `null` for off. What it times is up to you.
+- `ctx.deadline.set(inMs, key)` replaces any pending deadline (there's one per session). `ctx.deadline.clear()` cancels it, for example when everyone has answered early. `ctx.deadline.get()` reads it.
+- `ctx.viewer` in `onDeadline` is whoever's request noticed the deadline, or nobody. Don't treat it as their move.
+- A game can use deadlines without offering `timer`: define `onDeadline` and set them yourself. A game that offers `timer` must define `onDeadline`.
+
+On the play screen, every `PlayComponent` gets a `deadline` prop. Pass it to `useDeadline`, which counts down and nudges the server at zero:
+
+```tsx
+const { seconds } = useDeadline("my_game", shareCode, deadline);
+{seconds !== null && <span>{seconds}s</span>}
+```
+
+`useDeadline` hears about new deadlines through `useGameSession` (or `useGameView`), so keep one of those on the page. In tests, pass `timerSeconds` to `createTestSession` and use `t.clock.advance(ms)` (or `advance(ms, { nudge: false })` to act as if no browser was watching) and `t.deadline()`.
+
+---
+
 ## Testing
 
 `@/lib/game-sdk/testing` runs a game in memory: no browser, no HTTP, and no database (the dev database is production, so this matters). Actions pass through the same access and input checks as the real route, and the same transaction rules — a crash rolls the action back, a `GameError` keeps what was written before it, and broadcasts and pushes are recorded only when an action commits.

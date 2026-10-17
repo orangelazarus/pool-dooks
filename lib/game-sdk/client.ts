@@ -98,6 +98,9 @@ export function useGameSession(shareCode: string, handlers: GameSessionHandlers 
 
   useSession(shareCode, (event) => {
     const current = handlersRef.current;
+    if (event.type === "game:deadline") {
+      for (const listener of deadlineListeners.get(shareCode) ?? []) listener(event.payload);
+    }
     current.onSessionEvent?.(event);
     if (event.type === "game:event") current.onEvent?.(event.payload.name, event.payload.data);
     if (
@@ -186,4 +189,87 @@ export function useGameView<V>(gameType: string, shareCode: string, initialView:
   );
 
   return { view, setView, act, busy, refresh };
+}
+
+// ── Timed games ─────────────────────────────────────────────────────────────
+
+/** A pending deadline as the browser gets it: `at` is an ISO timestamp. */
+export interface DeadlineInfo {
+  at: string;
+  key: string;
+}
+
+// useGameSession hands deadline events to useDeadline through this, so a page
+// still has one realtime subscription however many hooks want its events.
+const deadlineListeners = new Map<string, Set<(deadline: DeadlineInfo | null) => void>>();
+
+const TICK_MS = 250;
+// Ask a little after zero, so a slightly fast clock doesn't ask too early.
+const NUDGE_GRACE_MS = 150;
+
+/**
+ * Counts down to the session's deadline. `initial` is the `deadline` prop core
+ * passes every PlayComponent. When the countdown reaches zero this asks the
+ * server to settle it; the game's own broadcast then brings the new phase.
+ * Needs useGameSession (or useGameView) mounted on the same page.
+ */
+export function useDeadline(gameType: string, shareCode: string, initial: DeadlineInfo | null) {
+  const [deadline, setDeadline] = useState(initial);
+  const [now, setNow] = useState(() => Date.now());
+  // Server time minus this browser's time, learned from the server's replies.
+  const [skew, setSkew] = useState(0);
+  const nudged = useRef<string | null>(null);
+  // Bumped to ask again after the server said "not yet".
+  const [retry, setRetry] = useState(0);
+
+  useEffect(() => {
+    const listeners = deadlineListeners.get(shareCode) ?? new Set();
+    deadlineListeners.set(shareCode, listeners);
+    listeners.add(setDeadline);
+    return () => {
+      listeners.delete(setDeadline);
+      if (listeners.size === 0) deadlineListeners.delete(shareCode);
+    };
+  }, [shareCode]);
+
+  useEffect(() => {
+    if (!deadline) return;
+    const timer = setInterval(() => setNow(Date.now()), TICK_MS);
+    return () => clearInterval(timer);
+  }, [deadline]);
+
+  const at = deadline ? Date.parse(deadline.at) : null;
+  const remainingMs = at === null ? null : Math.max(0, at - (now + skew));
+
+  useEffect(() => {
+    if (!deadline || remainingMs === null || remainingMs > 0) return;
+    const marker = `${deadline.at}|${deadline.key}`;
+    if (nudged.current === marker) return;
+    nudged.current = marker;
+    const timer = setTimeout(() => {
+      call<{ fired: boolean; deadline: DeadlineInfo | null; serverNow: string }>(
+        `/api/games/${gameType}/sessions/${shareCode}/_deadline`,
+        undefined,
+        "POST"
+      )
+        .then((reply) => {
+          setSkew(Date.parse(reply.serverNow) - Date.now());
+          setDeadline(reply.deadline);
+          // Asked too early (this clock runs fast): ask again once the server's clock gets there.
+          if (!reply.fired && reply.deadline?.at === deadline.at) {
+            const wait = Math.max(TICK_MS, Date.parse(reply.deadline.at) - Date.parse(reply.serverNow));
+            setTimeout(() => {
+              nudged.current = null;
+              setRetry((n) => n + 1);
+            }, wait + NUDGE_GRACE_MS);
+          }
+        })
+        .catch(() => {
+          nudged.current = null;
+        });
+    }, NUDGE_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [deadline, remainingMs, retry, gameType, shareCode]);
+
+  return { deadline, remainingMs, seconds: remainingMs === null ? null : Math.ceil(remainingMs / 1000) };
 }

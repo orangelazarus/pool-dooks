@@ -19,4 +19,6 @@ export type SessionEvent =
   | { type: "rematch:ready"; payload: { shareCode: string } }
   // Everything a game built on lib/game-sdk broadcasts. Core doesn't know or
   // care what `name` and `data` mean — that is between a game's server and client.
-  | { type: "game:event"; payload: { name: string; data: unknown } };
+  | { type: "game:event"; payload: { name: string; data: unknown } }
+  // Timed games: the session's pending deadline changed (null: none pending).
+  | { type: "game:deadline"; payload: { at: string; key: string } | null };

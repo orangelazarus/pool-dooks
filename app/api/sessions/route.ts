@@ -13,6 +13,8 @@ const CreateSchema = z.object({
   gameContentId: z.string().uuid(),
   randomizeOrder: z.boolean().optional().default(false),
   isPublic: z.boolean().optional().default(false),
+  /** Timed games: one of the game's timer options, in seconds; null or absent for off. */
+  timerSeconds: z.number().int().positive().nullable().optional(),
   /**
    * Share code of a completed session whose confirmed players carry over. Usually
    * omitted — the caller's own open proposal is resolved server-side instead, so
@@ -35,11 +37,15 @@ export async function POST(req: NextRequest) {
   }
 
   const { gameType, gameContentId, randomizeOrder, isPublic, rematchFrom, skipRematch } = parsed.data;
+  const timerSeconds = parsed.data.timerSeconds ?? null;
 
   // Validate the game type and content exist via the plugin
   try {
     const plugin = getPlugin(gameType);
     await plugin.getContentMeta(gameContentId);
+    if (timerSeconds !== null && !plugin.timer?.options.includes(timerSeconds)) {
+      return NextResponse.json({ error: "That timer isn't offered for this game" }, { status: 400 });
+    }
   } catch {
     return NextResponse.json({ error: "Game content not found" }, { status: 404 });
   }
@@ -112,6 +118,7 @@ export async function POST(req: NextRequest) {
       hostId: user.id,
       randomizeOrder,
       isPublic,
+      timerSeconds,
     })
     .returning();
 

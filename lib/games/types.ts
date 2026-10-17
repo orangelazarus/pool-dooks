@@ -23,6 +23,10 @@ export interface GamePlugin {
   minPlayers: number;
   maxPlayers: number;
   supportsRandomize: boolean;
+  /** Timer choices to offer the host at session creation; null if the game isn't timed. */
+  timer: { options: number[]; label: string } | null;
+  /** The game sets deadlines (it defines onDeadline), so rendering it may move the session on. */
+  usesDeadlines: boolean;
 
   /**
    * Called when host starts the game.
@@ -63,6 +67,9 @@ export interface GamePlugin {
    * Returns a human-readable title for a piece of game content.
    */
   getContentMeta(gameContentId: string): Promise<{ title: string }>;
+
+  /** The session's pending deadline, for the play page's `deadline` prop. */
+  getDeadline(session: Session): Promise<{ at: string; key: string } | null>;
 
   /**
    * Serves /api/games/[gameType]/[...path]: runs the game's declared actions

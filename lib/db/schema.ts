@@ -54,6 +54,11 @@ export const sessions = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     rematch: jsonb("rematch").$type<Rematch>(),
+    // Timed games: the host's timer choice (null = off), and the one pending
+    // deadline the game has set. See lib/game-sdk (ctx.deadline).
+    timerSeconds: integer("timer_seconds"),
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }),
+    deadlineKey: text("deadline_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
   (t) => [index("idx_sessions_share_code").on(t.shareCode)]

@@ -13,6 +13,7 @@ import { afterCommit, executor } from "./tx";
 import type {
   ContentApi,
   ContentContext,
+  Deadline,
   SessionContext,
   SessionInfo,
   SessionPlayer,
@@ -27,6 +28,7 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 const MAX_BROADCAST_BYTES = 64 * 1024;
 const MAX_PUSH_TITLE = 80;
 const MAX_PUSH_BODY = 200;
+const MAX_DEADLINE_KEY = 64;
 
 export async function resolveViewer(supabase: SupabaseServerClient): Promise<Viewer | null> {
   const { data: { user } } = await supabase.auth.getUser();
@@ -94,6 +96,7 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
     tokenOrder: (row.tokenOrder ?? []) as string[],
     currentTokenIndex: row.currentTokenIndex ?? 0,
     completedAt: row.completedAt,
+    timerSeconds: row.timerSeconds ?? null,
     content,
   };
 
@@ -115,6 +118,9 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
       channel().send({ type: "broadcast", event, payload: { type: event, payload } }).then(() => {}, () => {})
     );
 
+  const announceDeadline = (deadline: Deadline | null) =>
+    send("game:deadline", deadline && { at: deadline.at.toISOString(), key: deadline.key });
+
   return {
     gameType,
     viewer,
@@ -135,6 +141,22 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
         .from(answers)
         .leftJoin(profiles, eq(answers.playerId, profiles.id))
         .where(eq(answers.sessionId, row.id));
+    },
+
+    deadline: {
+      async set(inMs, key) {
+        if (!Number.isFinite(inMs) || inMs < 0) throw new Error("deadline.set: inMs must be a non-negative number");
+        if (!key) throw new Error("deadline.set: a key is required");
+        const deadline = { at: new Date(Date.now() + inMs), key: key.slice(0, MAX_DEADLINE_KEY) };
+        await storage.setDeadline(row.id, deadline);
+        await announceDeadline(deadline);
+        return deadline;
+      },
+      async clear() {
+        await storage.setDeadline(row.id, null);
+        await announceDeadline(null);
+      },
+      get: () => storage.getDeadline(row.id),
     },
 
     turn: {
