@@ -43,6 +43,8 @@ export interface SessionInfo<C> {
   tokenOrder: string[];
   currentTokenIndex: number;
   completedAt: Date | null;
+  /** The host's timer choice in seconds, from the game's `timer.options`; null when off or not offered. */
+  timerSeconds: number | null;
   /** The content row this session is playing. */
   content: ContentRecord<C>;
 }
@@ -99,6 +101,23 @@ export interface StateApi<S> {
   mutate(change: (data: S) => S, options?: { attempts?: number }): Promise<{ data: S; version: number; changed: boolean }>;
 }
 
+/** A pending deadline: at `at`, the game's onDeadline runs with `key`. */
+export interface Deadline {
+  at: Date;
+  key: string;
+}
+
+export interface DeadlineApi {
+  /**
+   * Sets the session's deadline, replacing any pending one: `inMs` from now,
+   * onDeadline(ctx, key) runs. Part of the action's transaction, and every
+   * open browser hears of it (useDeadline). Keys are the game's own, e.g. "voting".
+   */
+  set(inMs: number, key: string): Promise<Deadline>;
+  clear(): Promise<void>;
+  get(): Promise<Deadline | null>;
+}
+
 export interface PushMessage {
   title: string;
   body: string;
@@ -119,6 +138,8 @@ export interface SessionContext<C, S> extends ContentContext<C> {
   state: StateApi<S>;
   /** Turn-engine answers given so far. */
   answers(): Promise<GivenAnswer[]>;
+  /** Timed games: the session's one pending deadline. */
+  deadline: DeadlineApi;
   turn: {
     /** Hands the turn to one of this session's players. */
     set(playerId: string): Promise<void>;
@@ -178,6 +199,25 @@ export interface GameDefinition<C = unknown, S = unknown> {
   minPlayers: number;
   maxPlayers: number;
   supportsRandomize?: boolean;
+
+  /**
+   * Offer the host a timer when creating a session. The choice (or null, for
+   * off) is ctx.session.timerSeconds; what it times is up to the game, which
+   * sets deadlines with ctx.deadline and must define onDeadline.
+   */
+  timer?: {
+    /** Seconds, e.g. [30, 60, 90]. */
+    options: number[];
+    /** What the select is called, e.g. "Time to answer". Default "Timer". */
+    label?: string;
+  };
+
+  /**
+   * A deadline set with ctx.deadline.set has passed. Runs once, in its own
+   * transaction, before anything else touches the session; ctx.viewer is
+   * whoever's request noticed it (or null), so don't treat it as theirs.
+   */
+  onDeadline?(ctx: SessionContext<C, S>, key: string): Promise<void>;
 
   /**
    * Called when the host starts the game. Games on the shared turn engine

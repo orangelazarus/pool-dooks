@@ -17,6 +17,7 @@ import { mutateState } from "./mutate";
 import type {
   ContentApi,
   ContentRecord,
+  Deadline,
   GameDefinition,
   GivenAnswer,
   PushMessage,
@@ -37,6 +38,8 @@ export interface TestSessionOptions<C> {
   /** Which player hosts. Default the first. */
   hostIndex?: number;
   isPublic?: boolean;
+  /** The host's timer choice, for a game with `timer`. Default null (off). */
+  timerSeconds?: number | null;
 }
 
 export interface RecordedBroadcast {
@@ -55,6 +58,7 @@ interface Store<S> {
   completedAt: Date | null;
   state: { data: S; version: number } | null;
   answers: Array<{ tokenId: string; value: string; playerId: string }>;
+  deadline: Deadline | null;
 }
 
 const clone = <T>(value: T): T => structuredClone(value);
@@ -89,7 +93,14 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
     completedAt: null,
     state: null,
     answers: [],
+    deadline: null,
   };
+  // Deadlines run on this clock, which only moves when a test says so.
+  let now = Date.now();
+  const timerSeconds = options.timerSeconds ?? null;
+  if (timerSeconds !== null && !def.timer?.options.includes(timerSeconds)) {
+    throw new Error(`${def.displayName} doesn't offer a ${timerSeconds}s timer`);
+  }
 
   const broadcasts: RecordedBroadcast[] = [];
   const notifications: RecordedNotification[] = [];
@@ -153,6 +164,7 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
       tokenOrder: [...store.tokenOrder],
       currentTokenIndex: store.answers.length,
       completedAt: store.completedAt,
+      timerSeconds,
       content: clone(content),
     };
     const send = (b: RecordedBroadcast) => (pending ? pending.broadcasts.push(b) : broadcasts.push(b));
@@ -166,6 +178,22 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
       state: stateApi,
       async answers(): Promise<GivenAnswer[]> {
         return store.answers.map((a) => ({ ...a, username: players.find((p) => p.id === a.playerId)?.username ?? null }));
+      },
+      deadline: {
+        async set(inMs, key) {
+          if (!Number.isFinite(inMs) || inMs < 0) throw new Error("deadline.set: inMs must be a non-negative number");
+          if (!key) throw new Error("deadline.set: a key is required");
+          store.deadline = { at: new Date(now + inMs), key };
+          send({ name: "game:deadline", data: { at: store.deadline.at.toISOString(), key } });
+          return clone(store.deadline);
+        },
+        async clear() {
+          store.deadline = null;
+          send({ name: "game:deadline", data: null });
+        },
+        async get() {
+          return store.deadline ? clone(store.deadline) : null;
+        },
       },
       turn: {
         async set(playerId) {
@@ -217,6 +245,20 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
     }
   }
 
+  /** Like core: an overdue deadline is claimed (cleared) and fired before anything else. */
+  async function fireDueDeadline(viewerId: string | null) {
+    if (!def.onDeadline || store.status !== "in_progress" || !store.deadline || store.deadline.at.getTime() > now) return false;
+    const { key } = store.deadline;
+    await transaction(async () => {
+      const ctx = contextFor(viewerId);
+      await ctx.deadline.clear();
+      await def.onDeadline!(ctx, key);
+    }).catch((err) => {
+      if (!(err instanceof GameError)) throw err;
+    });
+    return true;
+  }
+
   const refusal = (r: { status: number; error: string; extra?: Record<string, unknown> }) =>
     new GameError(r.status, r.error, r.extra);
 
@@ -249,6 +291,7 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
         async act<T = unknown>(name: string, input?: unknown): Promise<T> {
           const action = Object.hasOwn(def.sessionActions ?? {}, name) ? def.sessionActions![name] : undefined;
           if (!action) throw new GameError(404, "Not found");
+          await fireDueDeadline(viewerId);
           const ctx = contextFor(viewerId);
           const refused = checkSessionAccess(action, ctx, ctx.session);
           if (refused) throw refusal(refused);
@@ -257,7 +300,8 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
           return transaction(async () => ((await action.handler(ctx, parsed.value)) ?? { ok: true }) as T);
         },
         /** What buildPlayProps sends this viewer's browser. */
-        playProps() {
+        async playProps() {
+          await fireDueDeadline(viewerId);
           return def.buildPlayProps(contextFor(viewerId));
         },
       };
@@ -285,9 +329,24 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
     status: () => store.status,
     currentPlayerId: () => store.currentPlayerId,
     /** The reveal's props. */
-    result() {
+    async result() {
+      await fireDueDeadline(hostId);
       return def.buildResult(contextFor(hostId));
     },
+
+    /**
+     * The deadline clock. `advance` moves it on and, like a browser's countdown
+     * reaching zero, fires a due deadline; with `nudge: false` nobody is
+     * watching, and it waits for the next action or page load.
+     */
+    clock: {
+      now: () => new Date(now),
+      async advance(ms: number, { nudge = true }: { nudge?: boolean } = {}) {
+        now += ms;
+        return nudge ? fireDueDeadline(null) : false;
+      },
+    },
+    deadline: () => (store.deadline ? clone(store.deadline) : null),
   };
 }
 

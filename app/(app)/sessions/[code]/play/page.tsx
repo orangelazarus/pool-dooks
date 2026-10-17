@@ -48,6 +48,13 @@ export default async function PlayPage({
 
   const plugin = getPlugin(session.gameType);
   const gameProps = await plugin.buildPlayProps(session);
+  // buildPlayProps settles an overdue deadline first, which may have ended the game.
+  let deadline: Awaited<ReturnType<typeof plugin.getDeadline>> = null;
+  if (plugin.usesDeadlines) {
+    const [now] = await db.select({ status: sessions.status }).from(sessions).where(eq(sessions.id, session.id));
+    if (now?.status === "completed") redirect(`/sessions/${code}/reveal`);
+    deadline = await plugin.getDeadline(session);
+  }
 
   const { PlayComponent } = plugin;
 
@@ -58,6 +65,8 @@ export default async function PlayPage({
       // game's play screen in its read-only "waiting" state.
       currentUserId={role === "player" ? user!.id : ""}
       hostId={session.hostId}
+      // Timed games: the pending deadline, for useDeadline. Null for every other game.
+      deadline={deadline}
       players={players.map((p) => ({
         playerId: p.playerId!,
         username: p.username ?? "Unknown",

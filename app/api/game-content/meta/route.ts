@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   try {
     const plugin = getPlugin(gameType);
     const meta = await plugin.getContentMeta(gameContentId);
-    return NextResponse.json({ ...meta, supportsRandomize: plugin.supportsRandomize });
+    return NextResponse.json({ ...meta, supportsRandomize: plugin.supportsRandomize, timer: plugin.timer });
   } catch {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

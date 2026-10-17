@@ -11,6 +11,8 @@ export type {
   ContentContext,
   ContentListOptions,
   ContentRecord,
+  Deadline,
+  DeadlineApi,
   GameDefinition,
   GivenAnswer,
   PushMessage,

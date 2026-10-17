@@ -7,7 +7,7 @@ import { db, sessions } from "@/lib/db";
 import type { Session } from "@/lib/db/schema";
 import type { GamePlugin } from "@/lib/games/types";
 import { buildContentContext, buildSessionContext } from "./context";
-import { getContent } from "./storage";
+import { claimDueDeadline, getContent, getDeadline } from "./storage";
 import { GameError } from "./errors";
 import { checkContentAuth, checkSessionAccess, parseInput, type Refusal } from "./checks";
 import { runInTransaction } from "./tx";
@@ -59,13 +59,31 @@ async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path
 
     // /api/games/<gameType>/sessions/<shareCode>/<action>
     if (area === "sessions" && a && b && rest.length === 0) {
+      const isDeadline = b === DEADLINE_ACTION && !!def.onDeadline && req.method === "POST";
       const action = Object.hasOwn(def.sessionActions ?? {}, b) ? def.sessionActions![b] : undefined;
-      if (!action || (action.method ?? "POST") !== req.method) return fail(404, "Not found");
+      if (!isDeadline && (!action || (action.method ?? "POST") !== req.method)) return fail(404, "Not found");
       if (!SHARE_CODE.test(a)) return fail(404, "Session not found");
 
-      const [row] = await db.select().from(sessions).where(eq(sessions.shareCode, a));
+      let [row] = await db.select().from(sessions).where(eq(sessions.shareCode, a));
       // A session of another game is "not found" here, not "forbidden".
       if (!row || row.gameType !== def.gameType) return fail(404, "Session not found");
+
+      // An overdue deadline is settled before anything else sees the session.
+      const fired = await fireDueDeadline(def, row);
+      if (fired) row = fired;
+
+      if (isDeadline) {
+        // A browser whose countdown reached zero. Anyone who may see the game may nudge it.
+        const ctx = await buildSessionContext<C, S>(def.gameType, row);
+        if (!ctx.role) return fail(403, "This game is private");
+        const deadline = await ctx.deadline.get();
+        return NextResponse.json({
+          fired: !!fired,
+          deadline: deadline && { at: deadline.at.toISOString(), key: deadline.key },
+          serverNow: new Date().toISOString(),
+        });
+      }
+      if (!action) return fail(404, "Not found");
 
       const ctx = await buildSessionContext<C, S>(def.gameType, row);
       const refused = checkSessionAccess(action, ctx, ctx.session);
@@ -86,6 +104,32 @@ async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path
   }
 }
 
+/** The route a browser calls when its countdown runs out. Game action names may not start with "_". */
+const DEADLINE_ACTION = "_deadline";
+
+/**
+ * Runs the game's onDeadline if the session's deadline has passed. Returns the
+ * session as it is afterwards, or null if there was nothing due.
+ */
+async function fireDueDeadline<C, S>(def: GameDefinition<C, S>, row: Session): Promise<Session | null> {
+  if (!def.onDeadline || row.status !== "in_progress" || !row.deadlineAt || row.deadlineAt > new Date()) return null;
+  const fired = await runInTransaction(async () => {
+    const key = await claimDueDeadline(row.id, new Date());
+    if (key === null) return false; // Someone else got there first.
+    const ctx = await buildSessionContext<C, S>(def.gameType, row);
+    await ctx.deadline.clear(); // Tells open browsers the countdown is over.
+    await def.onDeadline!(ctx, key);
+    return true;
+  }).catch((err) => {
+    // A GameError from onDeadline is the game declining; the claim stands either way.
+    if (err instanceof GameError) return true;
+    throw err;
+  });
+  if (!fired) return null;
+  const [after] = await db.select().from(sessions).where(eq(sessions.id, row.id));
+  return after ?? null;
+}
+
 /**
  * Declares a game. This is the whole of a game's contract with core: what it
  * is, how a session of it runs, and the actions its client can call.
@@ -94,7 +138,18 @@ export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>):
   if (!GAME_TYPE.test(def.gameType)) {
     throw new Error(`Invalid gameType "${def.gameType}": use lowercase letters, digits and underscores`);
   }
+  for (const name of Object.keys(def.sessionActions ?? {})) {
+    if (name.startsWith("_")) throw new Error(`${def.gameType}: session action "${name}" — names starting with "_" are core's`);
+  }
+  if (def.timer) {
+    if (!def.onDeadline) throw new Error(`${def.gameType}: a game with a timer must define onDeadline`);
+    if (def.timer.options.length === 0 || def.timer.options.some((n) => !Number.isInteger(n) || n <= 0)) {
+      throw new Error(`${def.gameType}: timer.options must be positive whole seconds`);
+    }
+  }
   const ctxFor = (session: Session) => buildSessionContext<C, S>(def.gameType, session);
+  // Rendering a page settles an overdue deadline first, so nobody is shown a phase that has already ended.
+  const settled = async (session: Session) => (await fireDueDeadline(def, session)) ?? session;
 
   return {
     gameType: def.gameType,
@@ -104,6 +159,8 @@ export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>):
     minPlayers: def.minPlayers,
     maxPlayers: def.maxPlayers,
     supportsRandomize: def.supportsRandomize ?? false,
+    timer: def.timer ? { options: [...def.timer.options], label: def.timer.label ?? "Timer" } : null,
+    usesDeadlines: !!def.onDeadline,
 
     async getContentMeta(gameContentId) {
       const content = await getContent(def.gameType, gameContentId);
@@ -132,8 +189,13 @@ export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>):
       });
     },
 
-    buildPlayProps: async (session) => def.buildPlayProps(await ctxFor(session)),
-    buildResult: async (session) => def.buildResult(await ctxFor(session)),
+    buildPlayProps: async (session) => def.buildPlayProps(await ctxFor(await settled(session))),
+    buildResult: async (session) => def.buildResult(await ctxFor(await settled(session))),
+    async getDeadline(session) {
+      if (!def.onDeadline) return null;
+      const deadline = await getDeadline(session.id);
+      return deadline && { at: deadline.at.toISOString(), key: deadline.key };
+    },
     getLobbyMeta: def.getLobbyMeta ? async (session) => def.getLobbyMeta!(await ctxFor(session)) : undefined,
 
     handleRequest: (req, path) => runAction(def, req, path),
