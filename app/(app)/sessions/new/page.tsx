@@ -9,8 +9,13 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Shuffle, Gamepad2, Users, Globe } from "lucide-react";
+import { Shuffle, Gamepad2, Users, Globe, Timer } from "lucide-react";
+
+const OFF = "off";
+const describeSeconds = (n: number) =>
+  n % 60 === 0 ? `${n / 60} minute${n === 60 ? "" : "s"}` : n > 60 ? `${Math.floor(n / 60)}m ${n % 60}s` : `${n} seconds`;
 
 export default function NewSessionPage() {
   const router = useRouter();
@@ -24,6 +29,9 @@ export default function NewSessionPage() {
   const [joining, setJoining] = useState(false);
   const [contentTitle, setContentTitle] = useState<string | null>(null);
   const [supportsRandomize, setSupportsRandomize] = useState(false);
+  // Offered only by timed games; "off" until the host picks a time.
+  const [timer, setTimer] = useState<{ options: number[]; label: string } | null>(null);
+  const [timerChoice, setTimerChoice] = useState(OFF);
   const [rematchGroup, setRematchGroup] = useState<string[] | null>(null);
 
   // If the player opened a "play again" prompt before coming here to pick content,
@@ -39,7 +47,7 @@ export default function NewSessionPage() {
     if (gameType && gameContentId) {
       fetch(`/api/game-content/meta?gameType=${encodeURIComponent(gameType)}&gameContentId=${encodeURIComponent(gameContentId)}`)
         .then((r) => r.json())
-        .then((d) => { setContentTitle(d.title); setSupportsRandomize(d.supportsRandomize ?? false); })
+        .then((d) => { setContentTitle(d.title); setSupportsRandomize(d.supportsRandomize ?? false); setTimer(d.timer ?? null); })
         .catch(() => {});
     }
   }, [gameType, gameContentId]);
@@ -51,7 +59,13 @@ export default function NewSessionPage() {
       const res = await fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gameType, gameContentId, randomizeOrder: randomize, isPublic }),
+        body: JSON.stringify({
+          gameType,
+          gameContentId,
+          randomizeOrder: randomize,
+          isPublic,
+          timerSeconds: timer && timerChoice !== OFF ? Number(timerChoice) : null,
+        }),
       });
       if (!res.ok) throw new Error();
       const { shareCode } = await res.json();
@@ -117,6 +131,32 @@ export default function NewSessionPage() {
                   </p>
                 </div>
                 <Switch id="randomize" checked={randomize} onCheckedChange={setRandomize} />
+              </div>
+            )}
+            {timer && (
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label className="flex items-center gap-2">
+                    <Timer className="h-4 w-4" />
+                    {timer.label}
+                  </Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {timerChoice === OFF ? "No clock: the game waits for everyone" : "When time runs out, the game moves on"}
+                  </p>
+                </div>
+                <Select value={timerChoice} onValueChange={(v) => v && setTimerChoice(v)}>
+                  <SelectTrigger className="w-36">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={OFF}>Off</SelectItem>
+                    {timer.options.map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {describeSeconds(n)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
             <div className="flex items-center justify-between gap-4">

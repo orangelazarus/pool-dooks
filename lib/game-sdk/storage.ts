@@ -2,11 +2,11 @@
 // through the ContentApi / StateApi objects built in context.ts, which pin
 // every call to one gameType (and, for state, one session). Queries go
 // through executor(), so inside a game action they join its transaction.
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
-import { gameContent, gameState, profiles } from "@/lib/db";
+import { and, desc, eq, ilike, lte, or, sql } from "drizzle-orm";
+import { gameContent, gameState, profiles, sessions } from "@/lib/db";
 import { GameError, StateConflictError } from "./errors";
 import { executor } from "./tx";
-import type { ContentListOptions, ContentRecord } from "./types";
+import type { ContentListOptions, ContentRecord, Deadline } from "./types";
 
 // Generous for a board position or a story; small enough that a buggy or
 // hostile caller can't use game storage as a dumping ground.
@@ -160,4 +160,38 @@ export async function updateState<S>(
     .returning({ data: gameState.data, version: gameState.version });
   if (!row) throw new StateConflictError();
   return row as Stored<S>;
+}
+
+// ── Deadlines: at most one per session, on its sessions row ────────────────
+
+export async function getDeadline(sessionId: string): Promise<Deadline | null> {
+  const [row] = await executor()
+    .select({ at: sessions.deadlineAt, key: sessions.deadlineKey })
+    .from(sessions)
+    .where(eq(sessions.id, sessionId));
+  return row?.at && row.key ? { at: row.at, key: row.key } : null;
+}
+
+export async function setDeadline(sessionId: string, deadline: Deadline | null): Promise<void> {
+  await executor()
+    .update(sessions)
+    .set({ deadlineAt: deadline?.at ?? null, deadlineKey: deadline?.key ?? null })
+    .where(eq(sessions.id, sessionId));
+}
+
+/**
+ * Takes a deadline that has passed, by clearing it, and returns its key. Must
+ * run inside a transaction. The row lock is the claim: when two requests race,
+ * the second waits on it, then re-checks and finds nothing left to take.
+ * (Not UPDATE … RETURNING: that would return the key after it was cleared.)
+ */
+export async function claimDueDeadline(sessionId: string, now: Date): Promise<string | null> {
+  const [due] = await executor()
+    .select({ key: sessions.deadlineKey })
+    .from(sessions)
+    .where(and(eq(sessions.id, sessionId), eq(sessions.status, "in_progress"), lte(sessions.deadlineAt, now)))
+    .for("update");
+  if (!due?.key) return null;
+  await setDeadline(sessionId, null);
+  return due.key;
 }
