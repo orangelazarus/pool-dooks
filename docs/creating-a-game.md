@@ -426,11 +426,50 @@ A game can also export `CreatePage` (`/games/<gameType>/create`) and `LibraryPag
 
 ---
 
+## Testing
+
+`@/lib/game-sdk/testing` runs a game in memory: no browser, no HTTP, and no database (the dev database is production, so this matters). Actions pass through the same access and input checks as the real route, and the same transaction rules — a crash rolls the action back, a `GameError` keeps what was written before it, and broadcasts and pushes are recorded only when an action commits.
+
+`games/hot-take/plugin.test.ts`:
+
+```ts
+import { expect, it } from "vitest";
+import { createTestSession } from "@/lib/game-sdk/testing";
+import { plugin } from "./plugin";
+
+it("ends once everyone has voted", async () => {
+  const t = createTestSession(plugin, { players: ["ann", "bob"], content: { statement: "Pineapple belongs on pizza" } });
+  await t.start();
+  await t.as("ann").act("vote", { vote: "agree" });
+  await expect(t.as("ann").act("vote", { vote: "agree" })).rejects.toThrow("You already voted");
+  await t.as("bob").act("vote", { vote: "disagree" });
+
+  expect(t.status()).toBe("completed");
+  expect(t.notifications).toHaveLength(1);
+});
+```
+
+The harness gives you:
+
+| | |
+|---|---|
+| `t.start()` | The host starts the game |
+| `t.as(id).act(name, input)` | Calls a session action as that player (`null` for a logged-out spectator). Rejects with the same `GameError`, status included, that the route would answer with |
+| `t.as(id).playProps()`, `t.result()` | What `buildPlayProps` and `buildResult` return |
+| `t.state()`, `t.status()`, `t.currentPlayerId()` | What's stored now |
+| `t.broadcasts`, `t.notifications` | Everything committed actions sent |
+| `t.setState(data)`, `t.withContext(id, fn)` | Simulate another request's write; run code against a real context |
+
+Test files are `*.test.ts` next to the code, and `npm test` runs them; CI does too. Only test files may import `@/lib/game-sdk/testing`.
+
+---
+
 ## Checklist
 
 - [ ] `gameType` is lowercase letters, digits and underscores, and never changes once games exist
 - [ ] `npm run games:sync` run and `lib/games/registry.ts` committed
 - [ ] `npm run lint` is clean — no restricted imports
+- [ ] `npm test` passes, with tests for your game's action flow
 - [ ] Every action has the tightest `auth` / `access` that works, and an `input` schema
 - [ ] Nothing secret in `buildPlayProps`, in a `"viewer"` action, or in a broadcast — spectators receive all three
 - [ ] Every `state.update` passes the `expectedVersion` it read
