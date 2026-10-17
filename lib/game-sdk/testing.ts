@@ -75,6 +75,7 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
   // Both change when players leave.
   let hostId = players[options.hostIndex ?? 0].id;
   const kicked = new Set<string>();
+  const leftPlayers: SessionPlayer[] = [];
   const isPublic = options.isPublic ?? false;
   const shareCode = "TEST01";
 
@@ -163,6 +164,7 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
       isPublic,
       currentPlayerId: store.currentPlayerId,
       players: clone(players),
+      leftPlayers: clone(leftPlayers),
       tokenOrder: [...store.tokenOrder],
       currentTokenIndex: store.answers.length,
       completedAt: store.completedAt,
@@ -274,15 +276,17 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
     const index = players.findIndex((p) => p.id === playerId);
     if (index < 0) throw new GameError(404, "That player isn't in this game");
 
-    const before = { players: clone(players), hostId, kicked: new Set(kicked) };
+    const before = { players: clone(players), left: clone(leftPlayers), hostId, kicked: new Set(kicked) };
     const undo = () => {
       players.splice(0, players.length, ...before.players);
+      leftPlayers.splice(0, leftPlayers.length, ...before.left);
       hostId = before.hostId;
       kicked.clear();
       for (const id of before.kicked) kicked.add(id);
     };
 
-    players.splice(index, 1);
+    leftPlayers.push(...players.splice(index, 1));
+    leftPlayers.sort((a, b) => a.joinOrder - b.joinOrder);
     if (reason === "kicked") kicked.add(playerId);
     if (playerId === hostId && players.length > 0) hostId = players[0].id;
     if (store.status === "lobby") {

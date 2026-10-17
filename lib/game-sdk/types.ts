@@ -39,6 +39,8 @@ export interface SessionInfo<C> {
   currentPlayerId: string | null;
   /** Active players in join order. */
   players: SessionPlayer[];
+  /** Players who have left or been removed, in join order: for naming them in results. */
+  leftPlayers: SessionPlayer[];
   /** Shared turn engine only: the ordered token ids, and how far play has got. */
   tokenOrder: string[];
   currentTokenIndex: number;

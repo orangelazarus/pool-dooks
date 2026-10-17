@@ -56,7 +56,8 @@ export async function buildContentContext<C>(gameType: string): Promise<ContentC
   return { gameType, viewer, content: contentApi<C>(gameType, viewer) };
 }
 
-async function loadPlayers(sessionId: string): Promise<SessionPlayer[]> {
+/** The roster, and who has left it. */
+async function loadPlayers(sessionId: string): Promise<{ players: SessionPlayer[]; leftPlayers: SessionPlayer[] }> {
   // Through the action's transaction, so a player who has just left is already gone.
   const rows = await executor()
     .select({
@@ -64,12 +65,20 @@ async function loadPlayers(sessionId: string): Promise<SessionPlayer[]> {
       username: profiles.username,
       avatarUrl: profiles.avatarUrl,
       joinOrder: sessionPlayers.joinOrder,
+      isActive: sessionPlayers.isActive,
     })
     .from(sessionPlayers)
     .leftJoin(profiles, eq(sessionPlayers.playerId, profiles.id))
-    .where(and(eq(sessionPlayers.sessionId, sessionId), eq(sessionPlayers.isActive, true)))
+    .where(eq(sessionPlayers.sessionId, sessionId))
     .orderBy(sessionPlayers.joinOrder);
-  return rows.map((r) => ({ ...r, username: r.username ?? "Unknown", avatarUrl: r.avatarUrl ?? null }));
+  const all = rows.map(({ isActive, ...r }) => ({
+    player: { ...r, username: r.username ?? "Unknown", avatarUrl: r.avatarUrl ?? null },
+    isActive: isActive !== false,
+  }));
+  return {
+    players: all.filter((r) => r.isActive).map((r) => r.player),
+    leftPlayers: all.filter((r) => !r.isActive).map((r) => r.player),
+  };
 }
 
 /**
@@ -80,7 +89,7 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
   if (row.gameType !== gameType) throw new GameError(404, "Session not found");
 
   const supabase = await createClient();
-  const [viewer, players, content] = await Promise.all([
+  const [viewer, { players, leftPlayers }, content] = await Promise.all([
     resolveViewer(supabase),
     loadPlayers(row.id),
     row.gameContentId ? storage.getContent<C>(gameType, row.gameContentId) : null,
@@ -94,6 +103,7 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
     isPublic: row.isPublic,
     currentPlayerId: row.currentPlayerId,
     players,
+    leftPlayers,
     tokenOrder: (row.tokenOrder ?? []) as string[],
     currentTokenIndex: row.currentTokenIndex ?? 0,
     completedAt: row.completedAt,

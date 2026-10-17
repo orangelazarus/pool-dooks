@@ -67,6 +67,8 @@ describe("leaving and removing players", () => {
     await t.start();
     await t.kick("p3");
     expect(t.state()?.order).toEqual(["p1", "p2"]);
+    // Still nameable in results.
+    expect((await t.withContext(null, async (ctx) => ctx.session.leftPlayers)).map((p) => p.id)).toEqual(["p3"]);
     expect(t.status()).toBe("in_progress");
     await t.leave("p1");
     expect(t.hostId).toBe("p2");

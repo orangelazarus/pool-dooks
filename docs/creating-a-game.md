@@ -441,7 +441,7 @@ async onPlayerLeft(ctx, { playerId, reason }) {
 },
 ```
 
-Use it to take care of whatever was waiting on them: their turn, their pending answer, their seat in a two-player game. Throw a `GameError` to refuse, which undoes the removal entirely. If nobody is left, core ends the game. Every open play screen re-renders with the new roster (`players`, `hostId`) on its own. In tests, use `t.leave(id)` and `t.kick(id)`.
+Use it to take care of whatever was waiting on them: their turn, their pending answer, their seat in a two-player game. Throw a `GameError` to refuse, which undoes the removal entirely. If nobody is left, core ends the game. Every open play screen re-renders with the new roster (`players`, `hostId`) on its own. Name departed players in results from `ctx.session.leftPlayers`. In tests, use `t.leave(id)` and `t.kick(id)`.
 
 ---
 
