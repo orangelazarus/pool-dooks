@@ -220,6 +220,15 @@ export interface GameDefinition<C = unknown, S = unknown> {
   onDeadline?(ctx: SessionContext<C, S>, key: string): Promise<void>;
 
   /**
+   * A player left mid-game, or the host removed them. Without this hook a game
+   * in progress can't be left at all. ctx.session.players no longer includes
+   * them, and if they were host, ctx.session.hostId is already the new host.
+   * Adjust the game so it can go on without them (their turn, their pending
+   * answer…), or end it with ctx.finish(). If nobody is left, core ends it.
+   */
+  onPlayerLeft?(ctx: SessionContext<C, S>, left: { playerId: string; reason: "left" | "kicked" }): Promise<void>;
+
+  /**
    * Called when the host starts the game. Games on the shared turn engine
    * return a tokenOrder; games that run their own state usually call
    * ctx.state.init() and return who goes first.

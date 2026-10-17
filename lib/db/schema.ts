@@ -75,7 +75,10 @@ export const sessionPlayers = pgTable(
       .notNull()
       .references(() => profiles.id, { onDelete: "cascade" }),
     joinOrder: integer("join_order").notNull(),
+    // False once the player leaves or is removed; the row stays.
     isActive: boolean("is_active").default(true),
+    // Removed by the host, so they may not rejoin. See lib/sessions/leave.ts.
+    kicked: boolean("kicked").notNull().default(false),
     joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow(),
   },
   (t) => [

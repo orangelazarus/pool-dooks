@@ -57,7 +57,8 @@ export async function buildContentContext<C>(gameType: string): Promise<ContentC
 }
 
 async function loadPlayers(sessionId: string): Promise<SessionPlayer[]> {
-  const rows = await db
+  // Through the action's transaction, so a player who has just left is already gone.
+  const rows = await executor()
     .select({
       id: sessionPlayers.playerId,
       username: profiles.username,

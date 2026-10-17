@@ -72,7 +72,9 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
     ? Array.from({ length: options.players }, (_, i) => `p${i + 1}`)
     : options.players;
   const players: SessionPlayer[] = names.map((name, i) => ({ id: name, username: name, avatarUrl: null, joinOrder: i }));
-  const hostId = players[options.hostIndex ?? 0].id;
+  // Both change when players leave.
+  let hostId = players[options.hostIndex ?? 0].id;
+  const kicked = new Set<string>();
   const isPublic = options.isPublic ?? false;
   const shareCode = "TEST01";
 
@@ -259,12 +261,70 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
     return true;
   }
 
+  /** Like lib/sessions/leave.ts: off the roster, host handed on, then the game's onPlayerLeft. */
+  async function removePlayer(actorId: string, playerId: string, reason: "left" | "kicked") {
+    if (store.status !== "lobby" && store.status !== "in_progress") throw new GameError(400, "This game is over");
+    if (reason === "kicked") {
+      if (actorId !== hostId) throw new GameError(403, "Only the host can remove players");
+      if (playerId === actorId) throw new GameError(400, "To go yourself, leave the game");
+    }
+    if (store.status === "in_progress" && !def.onPlayerLeft) {
+      throw new GameError(409, `${def.displayName} can't continue without a player`);
+    }
+    const index = players.findIndex((p) => p.id === playerId);
+    if (index < 0) throw new GameError(404, "That player isn't in this game");
+
+    const before = { players: clone(players), hostId, kicked: new Set(kicked) };
+    const undo = () => {
+      players.splice(0, players.length, ...before.players);
+      hostId = before.hostId;
+      kicked.clear();
+      for (const id of before.kicked) kicked.add(id);
+    };
+
+    players.splice(index, 1);
+    if (reason === "kicked") kicked.add(playerId);
+    if (playerId === hostId && players.length > 0) hostId = players[0].id;
+    if (store.status === "lobby") {
+      if (players.length === 0) store.status = "expired";
+      return;
+    }
+    const stored = clone(store);
+    const sent = { broadcasts: broadcasts.length, notifications: notifications.length };
+    try {
+      await transaction(async () => {
+        const ctx = contextFor(actorId);
+        await def.onPlayerLeft!(ctx, { playerId, reason });
+        if (ctx.session.players.length === 0) await ctx.finish();
+      });
+    } catch (err) {
+      // A refusal from the game undoes the removal and its writes too (unlike an action's GameError).
+      Object.assign(store, stored);
+      broadcasts.length = sent.broadcasts;
+      notifications.length = sent.notifications;
+      undo();
+      throw err;
+    }
+  }
+
   const refusal = (r: { status: number; error: string; extra?: Record<string, unknown> }) =>
     new GameError(r.status, r.error, r.extra);
 
   return {
-    hostId,
-    playerIds: players.map((p) => p.id),
+    get hostId() {
+      return hostId;
+    },
+    /** Players still in the game, in join order. */
+    get playerIds() {
+      return players.map((p) => p.id);
+    },
+    /** Removed by the host (and so barred from rejoining). */
+    kicked: () => [...kicked],
+
+    /** `playerId` leaves on their own. Rejects with the GameError core would answer with. */
+    leave: (playerId: string) => removePlayer(playerId, playerId, "left"),
+    /** The host removes `playerId`. */
+    kick: (playerId: string, by: string = hostId) => removePlayer(by, playerId, "kicked"),
     /** Everything broadcast by committed actions, oldest first. */
     broadcasts,
     /** Every push notification sent by committed actions, oldest first. */

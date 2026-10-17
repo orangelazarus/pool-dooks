@@ -426,6 +426,25 @@ A game can also export `CreatePage` (`/games/<gameType>/create`) and `LibraryPag
 
 ---
 
+## Players leaving
+
+A player leaves only by choosing to — the Leave button, or the host removing them. Closing the tab or losing the connection never takes anyone out, so opening the invite link again puts a player straight back in their seat.
+
+In the lobby anyone may leave (and come back through the invite link), and the host may remove players (who can't). Once a game has started, leaving is possible **only if your game defines `onPlayerLeft`**; otherwise the menu doesn't offer it and the request is refused.
+
+```ts
+async onPlayerLeft(ctx, { playerId, reason }) {
+  // ctx.session.players already excludes them; if they hosted, hostId is the new host.
+  await ctx.state.mutate((s) => withoutPlayer(s, playerId));
+  if (ctx.session.players.length < 2) await ctx.finish();
+  await ctx.broadcast("changed", {});
+},
+```
+
+Use it to take care of whatever was waiting on them: their turn, their pending answer, their seat in a two-player game. Throw a `GameError` to refuse, which undoes the removal entirely. If nobody is left, core ends the game. Every open play screen re-renders with the new roster (`players`, `hostId`) on its own. In tests, use `t.leave(id)` and `t.kick(id)`.
+
+---
+
 ## Timed games
 
 Core can offer the host a timer and fire deadlines for you. Nothing runs on a schedule. A deadline fires when an open browser's countdown reaches zero, or when the next request touches the session, whichever comes first, and it always fires exactly once.

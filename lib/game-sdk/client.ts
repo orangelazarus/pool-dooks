@@ -103,6 +103,9 @@ export function useGameSession(shareCode: string, handlers: GameSessionHandlers 
     }
     current.onSessionEvent?.(event);
     if (event.type === "game:event") current.onEvent?.(event.payload.name, event.payload.data);
+    // Someone left or the host changed: re-render with the server's roster
+    // (the players and hostId props). A player who left becomes a spectator.
+    if (event.type === "player:left" || event.type === "host:changed") router.refresh();
     if (
       (event.type === "session:completed" || event.type === "session:revealed") &&
       current.redirectOnComplete !== false
