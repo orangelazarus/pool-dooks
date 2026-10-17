@@ -33,7 +33,7 @@ export async function listOpenSessions(): Promise<{ joinable: OpenSession[]; wat
       isPublic: sessions.isPublic,
       createdAt: sessions.createdAt,
       hostName: profiles.username,
-      playerCount: sql<number>`(select count(*)::int from ${sessionPlayers} where ${sessionPlayers.sessionId} = ${sessions.id})`,
+      playerCount: sql<number>`(select count(*)::int from ${sessionPlayers} where ${sessionPlayers.sessionId} = ${sessions.id} and ${sessionPlayers.isActive})`,
     })
     .from(sessions)
     .leftJoin(profiles, eq(sessions.hostId, profiles.id))

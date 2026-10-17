@@ -16,7 +16,9 @@ export async function getViewerRole(
     const [membership] = await db
       .select({ id: sessionPlayers.id })
       .from(sessionPlayers)
-      .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.playerId, userId)));
+      .where(
+        and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.playerId, userId), eq(sessionPlayers.isActive, true))
+      );
     if (membership) return "player";
   }
   return session.isPublic ? "observer" : "denied";

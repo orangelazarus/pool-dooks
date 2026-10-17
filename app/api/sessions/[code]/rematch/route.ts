@@ -28,7 +28,9 @@ export async function POST(
   const [membership] = await db
     .select({ id: sessionPlayers.id })
     .from(sessionPlayers)
-    .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.playerId, user.id)));
+    .where(
+      and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.playerId, user.id), eq(sessionPlayers.isActive, true))
+    );
   if (!membership) return NextResponse.json({ error: "Not a player in this session" }, { status: 403 });
 
   // Already proposed — hand back the current state rather than starting over.
@@ -66,7 +68,7 @@ export async function POST(
   const others = await db
     .select({ playerId: sessionPlayers.playerId })
     .from(sessionPlayers)
-    .where(eq(sessionPlayers.sessionId, session.id));
+    .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.isActive, true)));
 
   await sendPushToUsers(
     others.map((p) => p.playerId).filter((id): id is string => id !== null && id !== user.id),

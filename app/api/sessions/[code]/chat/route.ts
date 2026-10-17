@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createClient } from "@/lib/supabase/server";
 import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
 import { getViewerRole } from "@/lib/sessions/access";
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     const players = await db
       .select({ playerId: sessionPlayers.playerId })
       .from(sessionPlayers)
-      .where(eq(sessionPlayers.sessionId, session.id));
+      .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.isActive, true)));
     await sendPushToUsers(
       players.map((p) => p.playerId).filter((id) => id !== user.id),
       {

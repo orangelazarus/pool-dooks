@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { useSession } from "@/hooks/useSession";
 import { useGameState } from "@/hooks/useGameState";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
-import { Bell, Crown, Eye, Globe, Lock, Play, Users } from "lucide-react";
+import { Bell, Crown, Eye, Globe, Lock, LogOut, Play, Users, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface LobbyProps {
@@ -80,7 +80,35 @@ export function Lobby({
     if (event.type === "session:started") {
       router.push(`/sessions/${shareCode}/play`);
     }
+    if (event.type === "player:left" && event.payload.playerId === currentUserId) {
+      if (event.payload.reason === "kicked") toast.error("The host removed you from this game");
+      router.push("/home");
+    }
+    // The new host gets the Start button.
+    if (event.type === "host:changed") router.refresh();
   });
+
+  const [removing, setRemoving] = useState<string | null>(null);
+  const remove = async (playerId: string) => {
+    const leaving = playerId === currentUserId;
+    if (!window.confirm(leaving ? "Leave this game?" : "Remove this player? They won't be able to rejoin.")) return;
+    setRemoving(playerId);
+    try {
+      const res = leaving
+        ? await fetch(`/api/sessions/${shareCode}/leave`, { method: "POST" })
+        : await fetch(`/api/sessions/${shareCode}/kick`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ playerId }),
+          });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Something went wrong");
+      if (leaving) router.push("/home");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setRemoving(null);
+    }
+  };
 
   const handleStart = async () => {
     setStarting(true);
@@ -149,6 +177,18 @@ export function Lobby({
               {player.playerId === currentUserId && player.playerId !== hostId && (
                 <Badge variant="outline" className="text-xs">You</Badge>
               )}
+              {isHost && player.playerId !== currentUserId && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  aria-label={`Remove ${player.username}`}
+                  disabled={removing !== null}
+                  onClick={() => remove(player.playerId)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
             </div>
           ))}
         </div>
@@ -193,6 +233,19 @@ export function Lobby({
         <p className="text-center text-sm text-muted-foreground">
           Waiting for the host to start the game...
         </p>
+      )}
+
+      {!isSpectator && state.players.some((p) => p.playerId === currentUserId) && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full gap-2 mt-3 text-muted-foreground"
+          disabled={removing !== null}
+          onClick={() => remove(currentUserId)}
+        >
+          <LogOut className="h-4 w-4" />
+          Leave game
+        </Button>
       )}
     </div>
   );

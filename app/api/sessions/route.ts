@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { db, sessions, sessionPlayers } from "@/lib/db";
-import { eq, desc, sql } from "drizzle-orm";
+import { and, eq, desc, sql } from "drizzle-orm";
 import { generateShareCode } from "@/lib/utils/share-code";
 import { getPlugin } from "@/lib/games/registry";
 import type { Rematch } from "@/lib/db/schema";
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
           await db
             .select({ playerId: sessionPlayers.playerId })
             .from(sessionPlayers)
-            .where(eq(sessionPlayers.sessionId, old.id))
+            .where(and(eq(sessionPlayers.sessionId, old.id), eq(sessionPlayers.isActive, true)))
         )
           .map((p) => p.playerId)
           .filter((id): id is string => id !== null)

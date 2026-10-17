@@ -39,6 +39,8 @@ export interface SessionInfo<C> {
   currentPlayerId: string | null;
   /** Active players in join order. */
   players: SessionPlayer[];
+  /** Players who have left or been removed, in join order: for naming them in results. */
+  leftPlayers: SessionPlayer[];
   /** Shared turn engine only: the ordered token ids, and how far play has got. */
   tokenOrder: string[];
   currentTokenIndex: number;
@@ -218,6 +220,15 @@ export interface GameDefinition<C = unknown, S = unknown> {
    * whoever's request noticed it (or null), so don't treat it as theirs.
    */
   onDeadline?(ctx: SessionContext<C, S>, key: string): Promise<void>;
+
+  /**
+   * A player left mid-game, or the host removed them. Without this hook a game
+   * in progress can't be left at all. ctx.session.players no longer includes
+   * them, and if they were host, ctx.session.hostId is already the new host.
+   * Adjust the game so it can go on without them (their turn, their pending
+   * answer…), or end it with ctx.finish(). If nobody is left, core ends it.
+   */
+  onPlayerLeft?(ctx: SessionContext<C, S>, left: { playerId: string; reason: "left" | "kicked" }): Promise<void>;
 
   /**
    * Called when the host starts the game. Games on the shared turn engine

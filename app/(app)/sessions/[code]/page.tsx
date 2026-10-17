@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Lobby } from "@/components/session/Lobby";
 import { GuestJoin } from "@/components/session/GuestJoin";
 import { SessionNotice } from "@/components/session/SessionNotice";
@@ -39,8 +39,19 @@ export default async function SessionPage({
     })
     .from(sessionPlayers)
     .leftJoin(profiles, eq(sessionPlayers.playerId, profiles.id))
-    .where(eq(sessionPlayers.sessionId, session.id))
+    .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.isActive, true)))
     .orderBy(sessionPlayers.joinOrder);
+
+  // Removed by the host: they don't get auto-joined back in.
+  if (user) {
+    const [mine] = await db
+      .select({ kicked: sessionPlayers.kicked })
+      .from(sessionPlayers)
+      .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.playerId, user.id)));
+    if (mine?.kicked) {
+      return <SessionNotice title="You were removed from this game" message="The host removed you from this lobby." />;
+    }
+  }
 
   const isPlayer = !!user && players.some((p) => p.playerId === user.id);
   const isFull = players.length >= plugin.maxPlayers;
