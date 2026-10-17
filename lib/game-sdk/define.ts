@@ -9,6 +9,7 @@ import type { GamePlugin } from "@/lib/games/types";
 import { buildContentContext, buildSessionContext } from "./context";
 import { getContent } from "./storage";
 import { GameError } from "./errors";
+import { checkContentAuth, checkSessionAccess, parseInput, type Refusal } from "./checks";
 import { runInTransaction } from "./tx";
 import type { ContentAction, GameDefinition, SessionAction } from "./types";
 
@@ -17,6 +18,8 @@ const SHARE_CODE = /^[A-Z0-9]{6}$/;
 
 const fail = (status: number, error: string, extra?: Record<string, unknown>) =>
   NextResponse.json({ error, ...extra }, { status });
+
+const refuse = (refusal: Refusal) => fail(refusal.status, refusal.error, refusal.extra);
 
 /** Reads and validates an action's input: the JSON body, or the query string for GET. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -32,9 +35,8 @@ async function readInput(req: NextRequest, action: ContentAction<any, any> | Ses
       return { ok: false as const, response: fail(400, "Invalid JSON body") };
     }
   }
-  const parsed = action.input.safeParse(raw);
-  if (!parsed.success) return { ok: false as const, response: fail(400, "Invalid input", { details: parsed.error.flatten() }) };
-  return { ok: true as const, value: parsed.data };
+  const parsed = parseInput(action, raw);
+  return parsed.ok ? { ok: true as const, value: parsed.value } : { ok: false as const, response: refuse(parsed.refusal) };
 }
 
 async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path: string[]): Promise<NextResponse> {
@@ -47,8 +49,8 @@ async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path
       if (!action || (action.method ?? "POST") !== req.method) return fail(404, "Not found");
 
       const ctx = await buildContentContext<C>(def.gameType);
-      if (action.auth !== "public" && !ctx.viewer) return fail(401, "Unauthorized");
-      if (action.auth === "account" && ctx.viewer!.isGuest) return fail(403, "Create an account to do this");
+      const refused = checkContentAuth(action, ctx.viewer);
+      if (refused) return refuse(refused);
 
       const input = await readInput(req, action);
       if (!input.ok) return input.response;
@@ -66,16 +68,8 @@ async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path
       if (!row || row.gameType !== def.gameType) return fail(404, "Session not found");
 
       const ctx = await buildSessionContext<C, S>(def.gameType, row);
-      if (action.access === "player" || action.access === "host") {
-        if (!ctx.viewer) return fail(401, "Unauthorized");
-        if (ctx.role !== "player") return fail(403, "Not a player in this game");
-        if (action.access === "host" && ctx.viewer.id !== row.hostId) return fail(403, "Only the host can do that");
-      } else if (!ctx.role) {
-        return fail(403, "This game is private");
-      }
-
-      const when = action.when ?? (action.access === "viewer" ? "any" : "in_progress");
-      if (when === "in_progress" && row.status !== "in_progress") return fail(400, "Session not in progress");
+      const refused = checkSessionAccess(action, ctx, ctx.session);
+      if (refused) return refuse(refused);
 
       const input = await readInput(req, action);
       if (!input.ok) return input.response;
@@ -96,7 +90,7 @@ async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path
  * Declares a game. This is the whole of a game's contract with core: what it
  * is, how a session of it runs, and the actions its client can call.
  */
-export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>): GamePlugin {
+export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>): GamePlugin & { definition: GameDefinition<C, S> } {
   if (!GAME_TYPE.test(def.gameType)) {
     throw new Error(`Invalid gameType "${def.gameType}": use lowercase letters, digits and underscores`);
   }
@@ -143,6 +137,8 @@ export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>):
     getLobbyMeta: def.getLobbyMeta ? async (session) => def.getLobbyMeta!(await ctxFor(session)) : undefined,
 
     handleRequest: (req, path) => runAction(def, req, path),
+    // For the test harness (lib/game-sdk/testing), which runs the game without HTTP or a database.
+    definition: def,
 
     PlayComponent: def.PlayComponent,
     RevealComponent: def.RevealComponent,

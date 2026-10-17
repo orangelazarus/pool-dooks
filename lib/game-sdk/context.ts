@@ -6,7 +6,8 @@ import { db, sessions, sessionPlayers, profiles, answers } from "@/lib/db";
 import type { Session } from "@/lib/db/schema";
 import { createClient } from "@/lib/supabase/server";
 import { sendPushToUsers } from "@/lib/push/send";
-import { GameError, StateConflictError } from "./errors";
+import { GameError } from "./errors";
+import { mutateState } from "./mutate";
 import * as storage from "./storage";
 import { afterCommit, executor } from "./tx";
 import type {
@@ -15,6 +16,7 @@ import type {
   SessionContext,
   SessionInfo,
   SessionPlayer,
+  StateApi,
   Viewer,
   ViewerRole,
 } from "./types";
@@ -25,8 +27,6 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 const MAX_BROADCAST_BYTES = 64 * 1024;
 const MAX_PUSH_TITLE = 80;
 const MAX_PUSH_BODY = 200;
-// Everyone acting at once can collide a few times in a row; past this, give up with the 409.
-const DEFAULT_MUTATE_ATTEMPTS = 5;
 
 export async function resolveViewer(supabase: SupabaseServerClient): Promise<Viewer | null> {
   const { data: { user } } = await supabase.auth.getUser();
@@ -97,6 +97,13 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
     content,
   };
 
+  const state: StateApi<S> = {
+    get: () => storage.getState<S>(gameType, row.id),
+    init: (data) => storage.initState<S>(gameType, row.id, data),
+    update: (data, { expectedVersion }) => storage.updateState<S>(gameType, row.id, data, expectedVersion),
+    mutate: (change, { attempts } = {}) => mutateState<S>(state, change, attempts),
+  };
+
   const isPlayer = !!viewer && players.some((p) => p.id === viewer.id);
   const role: ViewerRole | null = isPlayer ? "player" : row.isPublic ? "observer" : null;
 
@@ -115,25 +122,7 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
     session,
     content: contentApi<C>(gameType, viewer),
 
-    state: {
-      get: () => storage.getState<S>(gameType, row.id),
-      init: (data) => storage.initState<S>(gameType, row.id, data),
-      update: (data, { expectedVersion }) => storage.updateState<S>(gameType, row.id, data, expectedVersion),
-      async mutate(change, { attempts = DEFAULT_MUTATE_ATTEMPTS } = {}) {
-        for (let attempt = 1; ; attempt++) {
-          const stored = await storage.getState<S>(gameType, row.id);
-          if (!stored) throw new GameError(500, "Game state missing");
-          const next = change(stored.data);
-          if (next === stored.data) return { ...stored, changed: false };
-          try {
-            return { ...(await storage.updateState<S>(gameType, row.id, next, stored.version)), changed: true };
-          } catch (err) {
-            if (err instanceof StateConflictError && attempt < attempts) continue;
-            throw err;
-          }
-        }
-      },
-    },
+    state,
 
     async answers() {
       return executor()
