@@ -1,5 +1,6 @@
 // The game's rules as pure functions over its state. Server-side only: this
 // imports the question bank.
+import { shuffle } from "@/lib/game-sdk";
 import { QUESTIONS, type Question } from "./questions";
 import type { Choice, RoundRecord, SubterfugeState, SubterfugeView } from "./schema";
 
@@ -15,15 +16,6 @@ export function getQuestion(id: string): Question {
   const question = BY_ID.get(id);
   if (!question) throw new Error(`Unknown question: ${id}`);
   return question;
-}
-
-function shuffle<T>(items: T[]): T[] {
-  const out = [...items];
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
 }
 
 /** How a lie is stored and shown: all caps, so the truth can't be told apart by its formatting. */

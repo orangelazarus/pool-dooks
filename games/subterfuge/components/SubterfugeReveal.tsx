@@ -1,5 +1,5 @@
 "use client";
-import { Badge } from "@/components/ui/badge";
+import { Standings } from "@/lib/game-sdk/client";
 import { Crown } from "lucide-react";
 
 interface Standing {
@@ -36,25 +36,7 @@ export function SubterfugeReveal({ title, standings, rounds }: SubterfugeRevealP
         </div>
       )}
 
-      <div>
-        <h3 className="font-semibold mb-3 text-sm text-muted-foreground uppercase tracking-wide">Final Standings</h3>
-        <div className="space-y-2">
-          {standings.map((s, i) => (
-            <div
-              key={s.playerId}
-              className={`flex items-center gap-3 p-3 border rounded-lg ${
-                i === 0 ? "bg-primary/15 border-primary/60" : "bg-muted/30"
-              }`}
-            >
-              <span className="text-sm font-bold text-muted-foreground w-5">#{i + 1}</span>
-              <span className="font-medium flex-1">{s.player}</span>
-              <Badge variant={i === 0 ? "default" : "secondary"} className="font-mono text-xs">
-                {s.score}
-              </Badge>
-            </div>
-          ))}
-        </div>
-      </div>
+      <Standings rows={standings.map((s) => ({ id: s.playerId, name: s.player, score: s.score }))} />
 
       {rounds.length > 0 && (
         <div>
