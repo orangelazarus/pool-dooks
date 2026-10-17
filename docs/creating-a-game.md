@@ -181,11 +181,11 @@ Your game's API is declared, not routed by hand. Before a handler runs, core has
 | | Levels | URL |
 |---|---|---|
 | `contentActions` | `auth: "public"` anyone · `"user"` signed in, guests included · `"account"` a signed-up account | `/api/games/<gameType>/content/<name>` |
-| `sessionActions` | `access: "player"` this session's players · `"viewer"` players, plus spectators of a public game | `/api/games/<gameType>/sessions/<code>/<name>` |
+| `sessionActions` | `access: "player"` this session's players · `"host"` only the session's host · `"viewer"` players, plus spectators of a public game | `/api/games/<gameType>/sessions/<code>/<name>` |
 
 Use `auth: "account"` for anything costly or abusable — a guest account costs nothing to create.
 
-Actions default to `POST`. Set `method: "GET"` for reads; input then comes from the query string, so use `z.coerce` for numbers. Player actions require the session to be in progress unless you set `when: "any"`.
+Actions default to `POST`. Set `method: "GET"` for reads; input then comes from the query string, so use `z.coerce` for numbers. Player and host actions require the session to be in progress unless you set `when: "any"`.
 
 To refuse a request, `throw new GameError(status, message)`. Anything else a handler throws is logged and returned as a generic 500, so internals never reach the client.
 
@@ -201,7 +201,7 @@ One subtlety: a `GameError` is a reply, not a failure. Writes made before throwi
 | `ctx.content` | `create`, `get`, `list`, `update`, `remove` — this game's rows only. `list` never returns someone else's private content; `update` and `remove` are author-only. |
 | `ctx.session` | Read-only: `shareCode`, `status`, `hostId`, `isPublic`, `currentPlayerId`, `players`, and `content` (the row being played) |
 | `ctx.role` | `"player"`, `"observer"`, or `null` |
-| `ctx.state` | `get()`, `init(data)`, `update(data, { expectedVersion })` |
+| `ctx.state` | `get()`, `init(data)`, `update(data, { expectedVersion })`, `mutate(change)` |
 | `ctx.turn.set(playerId)` | Whose turn it is (must be one of this session's players) |
 | `ctx.finish()` | Ends the game and sends everyone to the reveal |
 | `ctx.broadcast(name, data)` | Realtime message to everyone with the session open |
@@ -209,6 +209,22 @@ One subtlety: a `GameError` is a reply, not a failure. Writes made before throwi
 | `ctx.answers()` | Shared turn engine only: answers given so far |
 
 **Always pass `expectedVersion` from the state you read.** If another request changed the state in between, the update is refused with a 409 instead of silently overwriting — this is what stops a double-tapped button applying twice.
+
+When everyone acts at once (all players answering the same question), those 409s are just two players' writes meeting. `ctx.state.mutate(change)` reads the state, applies `change`, writes it, and if another write landed in between, reads and applies again:
+
+```ts
+const { data, changed } = await ctx.state.mutate((state) => {
+  if (state.votes[me]) throw new GameError(400, "You already voted");
+  return { ...state, votes: { ...state.votes, [me]: vote } };
+});
+if (changed) await ctx.broadcast("changed", { count: Object.keys(data.votes).length });
+```
+
+`change` may run more than once, so it must depend only on the state it's given — take `Date.now()` or anything random *outside* it. Return the same object to write nothing.
+
+### Helpers
+
+`shuffle`, `pickOne` and `pickSome` come from both `@/lib/game-sdk` and `@/lib/game-sdk/client`.
 
 ### Games with one answer per turn
 
@@ -290,6 +306,20 @@ export function HotTakeBoard({ shareCode, currentUserId, players, statement, vot
 - **Spectators get the same component** with `currentUserId` set to `""`. Design the screen so a viewer who isn't a player simply sees a read-only view; core adds the "You're watching" banner.
 - `gameAction` rejects with a `GameActionError` carrying the server's message and status.
 - Start from the server-rendered props and update from `useGameSession` events. Don't keep anything the server didn't send.
+
+### Per-viewer views: `useGameView`
+
+Many games build a different view for each viewer on the server (your own hand, nobody else's). For those, the server returns that view from a GET `state` action and from every other action, and broadcasts a bare `"changed"` when anything happens. `useGameView` then runs the whole loop:
+
+```tsx
+const { view, act, busy } = useGameView<MyView>("my_game", shareCode, initialView);
+// …
+<Button disabled={busy} onClick={() => act("vote", { choiceId })}>Vote</Button>
+```
+
+It fetches the view again on `"changed"` (configurable with `refreshOn`) and when the page returns from the background. It ignores replies that arrive out of order, shows a refused action as a toast (refreshing on a 409), and goes to the reveal when an action replies with `finished: true`. See `games/subterfuge`.
+
+For the reveal, `<Standings rows={…} />` from `@/lib/game-sdk/client` is the usual ranked list.
 
 ---
 
