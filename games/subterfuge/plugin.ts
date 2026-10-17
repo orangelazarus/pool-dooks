@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import { defineGame, GameError, StateConflictError, type SessionContext } from "@/lib/game-sdk";
+import { defineGame, GameError, type SessionContext } from "@/lib/game-sdk";
 import {
   CreateSchema,
   LieSchema,
@@ -38,15 +38,9 @@ async function load(ctx: Ctx) {
   return { state: stored.data, version: stored.version };
 }
 
-const everyone = (ctx: Ctx, ids: string[]) => ctx.session.players.every((p) => ids.includes(p.id));
-
 // Games created before the setting existed always had decoys.
 const usesDecoys = (data: SubterfugeContent) => data.decoys !== false;
 const describe = (data: SubterfugeContent) => `${data.rounds} questions${usesDecoys(data) ? "" : " · no decoys"}`;
-
-// Everyone acts at once here, so two players' writes often meet. The loser of
-// that race simply goes again on the newer state instead of being turned away.
-const MAX_ATTEMPTS = 5;
 
 const PHASE_PUSH: Record<SubterfugeState["phase"], string> = {
   lying: "Next question — time to write a lie.",
@@ -60,22 +54,25 @@ const PHASE_PUSH: Record<SubterfugeState["phase"], string> = {
  * write lands first — and refuses a request by throwing a GameError.
  */
 async function apply(ctx: Ctx, change: (state: SubterfugeState) => SubterfugeState) {
-  for (let attempt = 1; ; attempt++) {
-    const { state, version } = await load(ctx);
-    const next = change(state);
-    if (next === state) return viewFor(state, ctx.viewer!.id);
-    try {
-      await ctx.state.update(next, { expectedVersion: version });
-    } catch (err) {
-      if (err instanceof StateConflictError && attempt < MAX_ATTEMPTS) continue;
-      throw err;
-    }
-
+  let before: SubterfugeState | undefined;
+  const { data: next, changed } = await ctx.state.mutate((state) => {
+    before = state;
+    return change(state);
+  });
+  if (changed) {
     const payload: ChangedPayload = { round: next.round, phase: next.phase, actedIds: actedIds(next) };
     await ctx.broadcast("changed", payload);
-    if (next.phase !== state.phase) await ctx.notify("others", { title: "Subterfuge", body: PHASE_PUSH[next.phase] });
-    return viewFor(next, ctx.viewer!.id);
+    if (next.phase !== before?.phase) await ctx.notify("others", { title: "Subterfuge", body: PHASE_PUSH[next.phase] });
   }
+  return viewFor(next, ctx.viewer?.id ?? null);
+}
+
+/** Moves the game on if everyone still here has now acted. */
+function settle(ctx: Ctx, state: SubterfugeState): SubterfugeState {
+  const ids = ctx.session.players.map((p) => p.id);
+  if (state.phase === "lying" && ids.every((id) => state.lies[id])) return openGuessing(state, usesDecoys(ctx.session.content.data));
+  if (state.phase === "guessing" && ids.every((id) => state.picks[id])) return closeRound(state);
+  return state;
 }
 
 export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
@@ -99,9 +96,19 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
     return { title: ctx.session.content.title, initialView: viewFor(state, ctx.viewer?.id ?? null) };
   },
 
+  // Someone who left can't hold up the round: if they were the last to act, it moves on.
+  async onPlayerLeft(ctx) {
+    if (ctx.session.players.length < 2) {
+      await ctx.finish();
+      return;
+    }
+    await apply(ctx, (state) => settle(ctx, state));
+  },
+
   async buildResult(ctx) {
     const state = (await ctx.state.get())?.data;
-    const name = (id: string) => ctx.session.players.find((p) => p.id === id)?.username ?? "Someone";
+    const everyone = [...ctx.session.players, ...ctx.session.leftPlayers];
+    const name = (id: string) => everyone.find((p) => p.id === id)?.username ?? "Someone";
     const standings = ctx.session.players
       .map((p) => ({ playerId: p.id, player: p.username, score: state?.scores[p.id] ?? 0 }))
       .sort((a, b) => b.score - a.score);
@@ -159,8 +166,7 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
             throw new GameError(400, "That's the actual answer! Write a lie instead.");
           }
 
-          const next: SubterfugeState = { ...state, lies: { ...state.lies, [me]: clean(text) } };
-          return everyone(ctx, Object.keys(next.lies)) ? openGuessing(next, usesDecoys(ctx.session.content.data)) : next;
+          return settle(ctx, { ...state, lies: { ...state.lies, [me]: clean(text) } });
         });
       },
     },
@@ -177,8 +183,7 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
           if (!choice) throw new GameError(400, "That isn't one of the choices");
           if (choice.authorIds.includes(me)) throw new GameError(400, "You can't pick your own lie");
 
-          const next: SubterfugeState = { ...state, picks: { ...state.picks, [me]: choiceId } };
-          return everyone(ctx, Object.keys(next.picks)) ? closeRound(next) : next;
+          return settle(ctx, { ...state, picks: { ...state.picks, [me]: choiceId } });
         });
       },
     },
@@ -203,10 +208,9 @@ export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
 
     /** Host only: stop waiting for whoever hasn't acted. */
     skip: {
-      access: "player",
+      access: "host",
       input: StepSchema,
       handler: async (ctx, step: z.infer<typeof StepSchema>) => {
-        if (ctx.viewer!.id !== ctx.session.hostId) throw new GameError(403, "Only the host can skip ahead");
         return apply(ctx, (state) => {
           if (step.round !== state.round || step.phase !== state.phase) return state;
 

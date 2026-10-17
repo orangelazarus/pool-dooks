@@ -1,6 +1,7 @@
 "use client";
 import { Badge } from "@/components/ui/badge";
 import { Crown } from "lucide-react";
+import { Standings } from "@/lib/game-sdk/client";
 
 interface Standing {
   playerId: string;
@@ -10,6 +11,8 @@ interface Standing {
 
 interface Finalist {
   player: string;
+  /** Left during the face-off. */
+  forfeited?: boolean;
   faceoff: number;
   score: number;
 }
@@ -38,7 +41,11 @@ export function AcroReveal({ title, champions, finalists, standings, rounds }: A
         <div className="flex items-center justify-center gap-2 text-primary">
           <Crown className="h-5 w-5" />
           <span className="font-semibold text-lg">
-            {champions.length === 1 ? `${champions[0]} won the face-off!` : `${champions.join(" and ")} tied — shared win!`}
+            {champions.length > 1
+              ? `${champions.join(" and ")} tied — shared win!`
+              : finalists.length > 0
+                ? `${champions[0]} won the face-off!`
+                : `${champions[0]} won!`}
           </span>
         </div>
       )}
@@ -56,27 +63,20 @@ export function AcroReveal({ title, champions, finalists, standings, rounds }: A
               >
                 <p className="font-medium">{f.player}</p>
                 <p className="font-mono text-2xl font-bold">{f.faceoff}</p>
-                <p className="text-xs text-muted-foreground">votes · {f.score} in the main game</p>
+                <p className="text-xs text-muted-foreground">
+                  {f.forfeited ? "left the face-off" : `votes · ${f.score} in the main game`}
+                </p>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      <div>
-        <h3 className="font-semibold mb-3 text-sm text-muted-foreground uppercase tracking-wide">Main Game</h3>
-        <div className="space-y-2">
-          {standings.map((s, i) => (
-            <div key={s.playerId} className="flex items-center gap-3 p-3 border rounded-lg bg-muted/30">
-              <span className="text-sm font-bold text-muted-foreground w-5">#{i + 1}</span>
-              <span className="font-medium flex-1">{s.player}</span>
-              <Badge variant="secondary" className="font-mono text-xs">
-                {s.score}
-              </Badge>
-            </div>
-          ))}
-        </div>
-      </div>
+      <Standings
+        title="Main Game"
+        highlight={finalists.length > 0 ? "none" : "first"}
+        rows={standings.map((s) => ({ id: s.playerId, name: s.player, score: s.score }))}
+      />
 
       {rounds.length > 0 && (
         <div>

@@ -14,7 +14,8 @@ export type ResultReason =
   | "agreement"
   | "repetition"
   | "fifty-move"
-  | "insufficient-material";
+  | "insufficient-material"
+  | "forfeit";
 
 // The full live state: returned by every route, broadcast as `chess:state`,
 // and passed to ChessBoard as its initial props.
@@ -82,6 +83,7 @@ const REASON_TEXT: Record<ResultReason, string> = {
   repetition: "by threefold repetition",
   "fifty-move": "by the fifty-move rule",
   "insufficient-material": "by insufficient material",
+  forfeit: "when their opponent left",
 };
 
 export function describeResult(

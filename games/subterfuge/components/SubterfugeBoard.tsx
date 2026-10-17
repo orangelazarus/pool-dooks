@@ -1,12 +1,10 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { useState } from "react";
 import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { gameAction, GameActionError, useGameSession } from "@/lib/game-sdk/client";
+import { useGameView } from "@/lib/game-sdk/client";
 import type { SubterfugeView } from "../schema";
 
 interface SubterfugeBoardProps {
@@ -20,61 +18,9 @@ interface SubterfugeBoardProps {
   initialView: SubterfugeView;
 }
 
-type Method = "GET" | "POST";
-
 export function SubterfugeBoard({ shareCode, currentUserId, hostId, players, title, initialView }: SubterfugeBoardProps) {
-  const router = useRouter();
-  const [view, setView] = useState(initialView);
-  const [busy, setBusy] = useState(false);
-  // Replies can arrive out of order; only the latest request may set the view.
-  const latest = useRef(0);
-
-  const request = useCallback(
-    async (action: string, input?: unknown, method: Method = "POST") => {
-      const mine = ++latest.current;
-      const next = await gameAction<SubterfugeView & { finished?: boolean }>("subterfuge", shareCode, action, input, method);
-      if (mine === latest.current) setView(next);
-      return next;
-    },
-    [shareCode]
-  );
-
-  const refresh = useCallback(() => {
-    request("state", undefined, "GET").catch(() => {});
-  }, [request]);
-
-  // The broadcast only says that something changed; what this viewer may see
-  // of it comes from the server. The hook also takes everyone to the reveal.
-  useGameSession(shareCode, {
-    onEvent: (name) => {
-      if (name === "changed") refresh();
-    },
-  });
-
-  // A phone that was asleep missed the broadcasts.
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === "visible") refresh();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [refresh]);
-
-  const act = async (action: "lie" | "pick" | "next" | "skip", input: unknown) => {
-    setBusy(true);
-    try {
-      const next = await request(action, input);
-      if (next.finished) router.push(`/sessions/${shareCode}/reveal`);
-      return true;
-    } catch (e) {
-      toast.error(e instanceof GameActionError ? e.message : "Something went wrong");
-      // 409: someone else's action landed first.
-      if (e instanceof GameActionError && e.status === 409) refresh();
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Refreshes on the game's "changed" broadcast; actions reply with the new view.
+  const { view, act, busy } = useGameView<SubterfugeView>("subterfuge", shareCode, initialView);
 
   const isPlayer = players.some((p) => p.playerId === currentUserId);
   const isHost = currentUserId === hostId;
