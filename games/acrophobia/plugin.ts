@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import { defineGame, GameError, StateConflictError, type SessionContext } from "@/lib/game-sdk";
+import { defineGame, GameError, type SessionContext } from "@/lib/game-sdk";
 import {
   AnswerSchema,
   CATEGORY_MODE_LABELS,
@@ -52,10 +52,6 @@ const view = (ctx: Ctx, state: AcroState) =>
 const describe = (data: AcroContent) =>
   `First to ${data.target} · ${data.faceoffRounds} face-off round${data.faceoffRounds === 1 ? "" : "s"} · ${CATEGORY_MODE_LABELS[data.categories].toLowerCase()}`;
 
-// Everyone acts at once here, so two players' writes often meet. The loser of
-// that race simply goes again on the newer state instead of being turned away.
-const MAX_ATTEMPTS = 5;
-
 const PHASE_PUSH: Record<AcroState["phase"], string> = {
   choosing: "New round — the last winner is picking a category.",
   writing: "New acronym — time to write!",
@@ -75,24 +71,28 @@ function maybeOpenVoting(ctx: Ctx, state: AcroState): AcroState {
  * throwing a GameError.
  */
 async function apply(ctx: Ctx, change: (state: AcroState) => AcroState) {
-  for (let attempt = 1; ; attempt++) {
-    const { state, version } = await load(ctx);
-    const next = change(state);
-    if (next === state) return view(ctx, state);
-    try {
-      await ctx.state.update(next, { expectedVersion: version });
-    } catch (err) {
-      if (err instanceof StateConflictError && attempt < MAX_ATTEMPTS) continue;
-      throw err;
-    }
-
+  let before: AcroState | undefined;
+  const { data: next, changed } = await ctx.state.mutate((state) => {
+    before = state;
+    return change(state);
+  });
+  if (changed) {
     const payload: ChangedPayload = { round: next.round, phase: next.phase, actedIds: actedIds(next) };
     await ctx.broadcast("changed", payload);
-    if (next.phase !== state.phase || next.round !== state.round) {
+    if (next.phase !== before?.phase || next.round !== before?.round) {
       await ctx.notify("others", { title: "Acrophobia", body: PHASE_PUSH[next.phase] });
     }
-    return view(ctx, next);
   }
+  return view(ctx, next);
+}
+
+/** Moves the game on if everyone it's waiting for has acted, or has gone. */
+function settle(ctx: Ctx, state: AcroState): AcroState {
+  const ids = playerIds(ctx);
+  if (state.phase === "choosing" && !ids.includes(state.chooserId ?? "")) return chooseCategory(state, anyCategory());
+  if (state.phase === "writing") return maybeOpenVoting(ctx, state);
+  if (state.phase === "voting" && everyone(voterIds(state, ids), Object.keys(state.votes))) return closeRound(state);
+  return state;
 }
 
 export const plugin = defineGame<AcroContent, AcroState>({
@@ -117,14 +117,32 @@ export const plugin = defineGame<AcroContent, AcroState>({
     return { title: ctx.session.content.title, initialView: view(ctx, state) };
   },
 
+  async onPlayerLeft(ctx, { playerId }) {
+    const { state } = await load(ctx);
+    // A finalist walking out hands the face-off to the other one.
+    if (state.stage === "faceoff" && state.finalists?.includes(playerId)) {
+      await ctx.state.mutate((s) => ({ ...s, forfeit: playerId }));
+      await ctx.finish();
+      return;
+    }
+    // The face-off needs a judge who isn't in it: below three, the main game decides.
+    if (ctx.session.players.length < 3) {
+      await ctx.finish();
+      return;
+    }
+    await apply(ctx, (s) => settle(ctx, s));
+  },
+
   async buildResult(ctx) {
     const state = (await ctx.state.get())?.data;
-    const name = (id: string) => ctx.session.players.find((p) => p.id === id)?.username ?? "Someone";
-    const standings = ctx.session.players
+    const everyonePlayed = [...ctx.session.players, ...ctx.session.leftPlayers];
+    const name = (id: string) => everyonePlayed.find((p) => p.id === id)?.username ?? "Someone";
+    const standings = everyonePlayed
       .map((p) => ({ playerId: p.id, player: p.username, score: state?.scores[p.id] ?? 0 }))
       .sort((a, b) => b.score - a.score);
     const finalists = (state?.finalists ?? []).map((id) => ({
       player: name(id),
+      forfeited: state?.forfeit === id,
       faceoff: state?.faceoffScores[id] ?? 0,
       score: state?.scores[id] ?? 0,
     }));
@@ -219,8 +237,7 @@ export const plugin = defineGame<AcroContent, AcroState>({
           if (!entry) throw new GameError(400, "That isn't one of the answers");
           if (entry.authorId === me) throw new GameError(400, "You can't vote for your own answer");
 
-          const next: AcroState = { ...state, votes: { ...state.votes, [me]: entryId } };
-          return everyone(voterIds(next, playerIds(ctx)), Object.keys(next.votes)) ? closeRound(next) : next;
+          return settle(ctx, { ...state, votes: { ...state.votes, [me]: entryId } });
         });
       },
     },
@@ -246,10 +263,9 @@ export const plugin = defineGame<AcroContent, AcroState>({
 
     /** Host only: stop waiting for whoever hasn't acted. */
     skip: {
-      access: "player",
+      access: "host",
       input: StepSchema,
       handler: async (ctx, step: z.infer<typeof StepSchema>) => {
-        if (ctx.viewer!.id !== ctx.session.hostId) throw new GameError(403, "Only the host can skip ahead");
         return apply(ctx, (state) => {
           if (step.round !== state.round || step.phase !== state.phase) return state;
 

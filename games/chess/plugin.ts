@@ -119,9 +119,19 @@ export const plugin = defineGame<ChessContent, ChessState>({
     };
   },
 
+  // Walking out of a game of chess loses it.
+  async onPlayerLeft(ctx, { playerId: leaverId }) {
+    const stored = await ctx.state.get();
+    if (!stored || stored.data.result) return;
+    const state = stored.data;
+    const leaverSide: Side = state.whitePlayerId === leaverId ? "white" : "black";
+    await finishGame(ctx, state, stored.version, otherSide(leaverSide), "forfeit");
+  },
+
   async buildResult(ctx) {
     const state = (await ctx.state.get())?.data;
-    const nameOf = (id?: string) => ctx.session.players.find((p) => p.id === id)?.username ?? "Unknown";
+    const everyone = [...ctx.session.players, ...ctx.session.leftPlayers];
+    const nameOf = (id?: string) => everyone.find((p) => p.id === id)?.username ?? "Unknown";
     return {
       title: ctx.session.content.title,
       timeControlSeconds: ctx.session.content.data.timeControlSeconds,

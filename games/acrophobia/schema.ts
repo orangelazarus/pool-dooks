@@ -79,6 +79,8 @@ export interface AcroState {
   wins: Record<string, number>;
   finalists: string[] | null;
   faceoffScores: Record<string, number>;
+  /** A finalist who left the face-off, handing it to the other. */
+  forfeit?: string | null;
   history: RoundRecord[];
 }
 

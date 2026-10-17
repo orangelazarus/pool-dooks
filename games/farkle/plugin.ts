@@ -27,7 +27,7 @@ function nextPlayerId(ctx: Ctx): string {
 /** Hands the dice to the next player and lets them know. */
 async function passTurn(ctx: Ctx, nextId: string) {
   await ctx.turn.set(nextId);
-  if (nextId !== ctx.viewer!.id) await ctx.notify(nextId, { title: "Your turn!", body: "The dice are yours." });
+  if (nextId !== ctx.viewer?.id) await ctx.notify(nextId, { title: "Your turn!", body: "The dice are yours." });
 }
 
 export const plugin = defineGame<FarkleContent, FarkleState>({
@@ -63,9 +63,36 @@ export const plugin = defineGame<FarkleContent, FarkleState>({
     };
   },
 
+  // The dice pass on if it was their turn; their turn's points go with them.
+  async onPlayerLeft(ctx, { playerId }) {
+    const { players, leftPlayers, currentPlayerId } = ctx.session;
+    if (players.length < 2) {
+      await ctx.finish();
+      return;
+    }
+    if (currentPlayerId !== playerId) return;
+
+    const seat = leftPlayers.find((p) => p.id === playerId)?.joinOrder ?? -1;
+    const nextId = (players.find((p) => p.joinOrder > seat) ?? players[0]).id;
+    const { data } = await ctx.state.mutate((turn) => ({ ...turn, ...FRESH_TURN }));
+    await passTurn(ctx, nextId);
+    const payload: FarkleStatePayload = {
+      currentPlayerId: nextId,
+      dice: null,
+      diceRemaining: 6,
+      turnScore: 0,
+      rollsThisTurn: 0,
+      scores: data.scores,
+      farkled: false,
+      banked: false,
+      hotDice: false,
+    };
+    await ctx.broadcast("state", payload);
+  },
+
   async buildResult(ctx) {
     const scores = (await ctx.state.get())?.data.scores ?? {};
-    const standings = ctx.session.players
+    const standings = [...ctx.session.players, ...ctx.session.leftPlayers]
       .map((p) => ({ playerId: p.id, player: p.username, score: scores[p.id] ?? 0 }))
       .sort((a, b) => b.score - a.score);
     const { title, data } = ctx.session.content;

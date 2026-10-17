@@ -1,5 +1,6 @@
 // The game's rules as pure functions over its state (apart from the dice:
 // acronyms, categories and shuffles are random).
+import { pickOne, pickSome, shuffle } from "@/lib/game-sdk";
 import { CATEGORIES } from "./categories";
 import type { AcroContent, AcroState, AcroView, Entry, RoundRecord } from "./schema";
 
@@ -19,19 +20,10 @@ const LETTER_WEIGHTS: Record<string, number> = {
 };
 const LETTERS = Object.entries(LETTER_WEIGHTS).flatMap(([letter, weight]) => Array(weight).fill(letter) as string[]);
 
-function shuffle<T>(items: readonly T[]): T[] {
-  const out = [...items];
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
-
 export function makeAcronym(length: number): string {
   let out = "";
   while (out.length < length) {
-    const letter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
+    const letter = pickOne(LETTERS);
     if (letter !== out[out.length - 1]) out += letter;
   }
   return out;
@@ -43,7 +35,7 @@ export function acronymLength(state: Pick<AcroState, "stage" | "stageRound">): n
 }
 
 export function anyCategory(): string {
-  return CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
+  return pickOne(CATEGORIES);
 }
 
 const randomCategory = (content: AcroContent) => (content.categories === "off" ? null : anyCategory());
@@ -118,7 +110,7 @@ export function chooseCategory(state: AcroState, category: string): AcroState {
 }
 
 export function offeredCategories(): string[] {
-  return shuffle(CATEGORIES).slice(0, OFFERED);
+  return pickSome(CATEGORIES, OFFERED);
 }
 
 /** Writing is over: the answers become one anonymous, shuffled list. */
@@ -233,9 +225,17 @@ export function nextRound(state: AcroState, content: AcroContent, playerIds: str
   return startWriting(moved, randomCategory(content));
 }
 
-/** Who won: the better face-off, then the better main game. Both finalists when that's level too. */
+/**
+ * Who won: the better face-off, then the better main game; both finalists when
+ * that's level too. A finalist who walked out loses. Without a face-off (too
+ * few players were left for one), the top of the main game.
+ */
 export function champions(state: AcroState): string[] {
-  const finalists = state.finalists ?? [];
+  if (!state.finalists) {
+    const top = Math.max(0, ...Object.values(state.scores));
+    return Object.keys(state.scores).filter((id) => top > 0 && state.scores[id] === top);
+  }
+  const finalists = state.finalists.filter((id) => id !== state.forfeit);
   const key = (id: string) => [state.faceoffScores[id] ?? 0, state.scores[id] ?? 0];
   const best = finalists.reduce<number[] | null>((top, id) => {
     const k = key(id);
