@@ -35,7 +35,9 @@ export async function POST(
   const [membership] = await db
     .select({ id: sessionPlayers.id })
     .from(sessionPlayers)
-    .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.playerId, user.id)));
+    .where(
+      and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.playerId, user.id), eq(sessionPlayers.isActive, true))
+    );
   if (!membership) return NextResponse.json({ error: "Not a player in this session" }, { status: 403 });
 
   // A player's latest answer wins, so drop them from both lists before re-adding.

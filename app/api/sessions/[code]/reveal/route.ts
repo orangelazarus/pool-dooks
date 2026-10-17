@@ -29,7 +29,7 @@ export async function POST(
   const players = await db
     .select({ playerId: sessionPlayers.playerId })
     .from(sessionPlayers)
-    .where(and(eq(sessionPlayers.sessionId, session.id)));
+    .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.isActive, true)));
 
   const playerIds = players
     .map((p) => p.playerId)

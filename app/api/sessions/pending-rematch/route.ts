@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { db, sessions, profiles, sessionPlayers } from "@/lib/db";
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 /**
  * Reports the caller's own open "play again" proposal, if any, so the create
@@ -30,7 +30,7 @@ export async function GET() {
       await db
         .select({ playerId: sessionPlayers.playerId })
         .from(sessionPlayers)
-        .where(eq(sessionPlayers.sessionId, open.id))
+        .where(and(eq(sessionPlayers.sessionId, open.id), eq(sessionPlayers.isActive, true)))
     )
       .map((p) => p.playerId)
       .filter((id): id is string => id !== null)

@@ -161,6 +161,7 @@ export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>):
     supportsRandomize: def.supportsRandomize ?? false,
     timer: def.timer ? { options: [...def.timer.options], label: def.timer.label ?? "Timer" } : null,
     usesDeadlines: !!def.onDeadline,
+    supportsLeaving: !!def.onPlayerLeft,
 
     async getContentMeta(gameContentId) {
       const content = await getContent(def.gameType, gameContentId);
@@ -191,6 +192,12 @@ export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>):
 
     buildPlayProps: async (session) => def.buildPlayProps(await ctxFor(await settled(session))),
     buildResult: async (session) => def.buildResult(await ctxFor(await settled(session))),
+    async playerLeft(session, playerId, reason) {
+      if (!def.onPlayerLeft) throw new Error(`${def.gameType} can't be left mid-game`);
+      const ctx = await ctxFor(session);
+      await def.onPlayerLeft(ctx, { playerId, reason });
+      if (ctx.session.players.length === 0) await ctx.finish();
+    },
     async getDeadline(session) {
       if (!def.onDeadline) return null;
       const deadline = await getDeadline(session.id);

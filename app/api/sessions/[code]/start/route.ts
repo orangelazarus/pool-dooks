@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { db, sessions, sessionPlayers } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getPlugin } from "@/lib/games/registry";
 import { sendPushToUsers } from "@/lib/push/send";
 import { expireIfStale } from "@/lib/sessions/expiry";
@@ -41,7 +41,7 @@ export async function POST(
       const players = await tx
         .select({ playerId: sessionPlayers.playerId, joinOrder: sessionPlayers.joinOrder })
         .from(sessionPlayers)
-        .where(eq(sessionPlayers.sessionId, locked.id))
+        .where(and(eq(sessionPlayers.sessionId, locked.id), eq(sessionPlayers.isActive, true)))
         .orderBy(sessionPlayers.joinOrder);
 
       if (players.length < plugin.minPlayers) {

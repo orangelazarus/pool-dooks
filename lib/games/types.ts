@@ -27,6 +27,8 @@ export interface GamePlugin {
   timer: { options: number[]; label: string } | null;
   /** The game sets deadlines (it defines onDeadline), so rendering it may move the session on. */
   usesDeadlines: boolean;
+  /** A player can leave, or be removed, while the game is in progress. */
+  supportsLeaving: boolean;
 
   /**
    * Called when host starts the game.
@@ -67,6 +69,12 @@ export interface GamePlugin {
    * Returns a human-readable title for a piece of game content.
    */
   getContentMeta(gameContentId: string): Promise<{ title: string }>;
+
+  /**
+   * Runs the game's onPlayerLeft, inside the caller's transaction, after the
+   * player has been marked inactive. Only when supportsLeaving.
+   */
+  playerLeft(session: Session, playerId: string, reason: "left" | "kicked"): Promise<void>;
 
   /** The session's pending deadline, for the play page's `deadline` prop. */
   getDeadline(session: Session): Promise<{ at: string; key: string } | null>;

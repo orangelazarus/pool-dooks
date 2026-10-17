@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createClient } from "@/lib/supabase/server";
 import { getPlugin } from "@/lib/games/registry";
 import { buttonVariants } from "@/components/ui/button";
@@ -32,7 +32,7 @@ export default async function RevealPage({
     .select({ playerId: sessionPlayers.playerId, username: profiles.username })
     .from(sessionPlayers)
     .leftJoin(profiles, eq(sessionPlayers.playerId, profiles.id))
-    .where(eq(sessionPlayers.sessionId, session.id))
+    .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.isActive, true)))
     .orderBy(sessionPlayers.joinOrder);
 
   // Only players of this session can carry the group forward.

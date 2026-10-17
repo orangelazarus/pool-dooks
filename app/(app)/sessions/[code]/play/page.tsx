@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { getPlugin } from "@/lib/games/registry";
 import { getViewerRole } from "@/lib/sessions/access";
 import { SessionNotice } from "@/components/session/SessionNotice";
+import { PlayMenu } from "@/components/session/PlayMenu";
 import { Eye } from "lucide-react";
 
 export default async function PlayPage({
@@ -75,7 +76,20 @@ export default async function PlayPage({
       {...gameProps}
     />
   );
-  if (role === "player") return board;
+  if (role === "player") {
+    if (!plugin.supportsLeaving) return board;
+    return (
+      <>
+        <PlayMenu
+          shareCode={code}
+          currentUserId={user!.id}
+          hostId={session.hostId}
+          players={players.map((p) => ({ playerId: p.playerId!, username: p.username ?? "Unknown" }))}
+        />
+        {board}
+      </>
+    );
+  }
 
   return (
     <>

@@ -33,28 +33,38 @@ export async function POST(
       .select()
       .from(sessionPlayers)
       .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.playerId, user.id)));
+    // Removed by the host: not coming back.
+    if (existing?.kicked) return "kicked" as const;
+    if (existing?.isActive) return "rejoined" as const;
+
+    const [{ count: seated }] = await tx
+      .select({ count: count() })
+      .from(sessionPlayers)
+      .where(and(eq(sessionPlayers.sessionId, session.id), eq(sessionPlayers.isActive, true)));
+    if (Number(seated) >= getPlugin(session.gameType).maxPlayers) return "full" as const;
+
     if (existing) {
-      // Reactivate if was inactive. Existing players can always return.
+      // Left the lobby earlier and came back: the same seat, active again.
       await tx.update(sessionPlayers).set({ isActive: true }).where(eq(sessionPlayers.id, existing.id));
-      return "rejoined" as const;
+      return "returned" as const;
     }
 
-    const [{ count: playerCount }] = await tx
+    // Join order only ever grows, so it stays unique after people leave.
+    const [{ count: everJoined }] = await tx
       .select({ count: count() })
       .from(sessionPlayers)
       .where(eq(sessionPlayers.sessionId, session.id));
-    if (Number(playerCount) >= getPlugin(session.gameType).maxPlayers) return "full" as const;
-
     await tx.insert(sessionPlayers).values({
       sessionId: session.id,
       playerId: user.id,
-      joinOrder: Number(playerCount),
+      joinOrder: Number(everJoined),
     });
     return "joined" as const;
   });
 
   if (outcome === "started") return NextResponse.json({ error: "Session already started" }, { status: 400 });
   if (outcome === "full") return NextResponse.json({ error: "Lobby is full" }, { status: 409 });
+  if (outcome === "kicked") return NextResponse.json({ error: "The host removed you from this game" }, { status: 403 });
   if (outcome === "rejoined") return NextResponse.json({ ok: true });
 
   // Broadcast player:joined event via Supabase Realtime
