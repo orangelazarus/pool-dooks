@@ -4,6 +4,7 @@
 // Supabase client, and the push sender.
 export { defineGame } from "./define";
 export { GameError, StateConflictError } from "./errors";
+export { shuffle, pickOne, pickSome } from "./shared";
 export type {
   ContentAction,
   ContentApi,

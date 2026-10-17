@@ -2,14 +2,17 @@
 // The browser-side surface of the game SDK: calling a game's declared actions
 // and listening to its session. Games never build API URLs or open realtime
 // channels themselves.
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { useSession } from "@/hooks/useSession";
 import type { SessionEvent } from "@/lib/realtime/events";
 
 export { useGameState } from "@/hooks/useGameState";
 export type { Player, GameState } from "@/hooks/useGameState";
 export type { SessionEvent } from "@/lib/realtime/events";
+export { shuffle, pickOne, pickSome } from "./shared";
+export { Standings, type StandingsRow } from "./components/Standings";
 
 /** A rejected action. `data` is the server's JSON, which may carry extra fields a game attached. */
 export class GameActionError extends Error {
@@ -104,4 +107,83 @@ export function useGameSession(shareCode: string, handlers: GameSessionHandlers 
       router.push(`/sessions/${shareCode}/reveal`);
     }
   });
+}
+
+interface GameViewOptions {
+  /** The GET session action that returns this viewer's view. Default "state". */
+  stateAction?: string;
+  /** Broadcast names that mean "something changed, fetch the view again". Default ["changed"]. */
+  refreshOn?: string[];
+}
+
+/**
+ * The play-screen loop for a game whose server builds a per-viewer view:
+ * holds the view, fetches it again when the game broadcasts a change or the
+ * page comes back from the background, and runs actions. A reply to an action
+ * is the new view; one carrying `finished: true` sends the player to the reveal.
+ */
+export function useGameView<V>(gameType: string, shareCode: string, initialView: V, options: GameViewOptions = {}) {
+  const { stateAction = "state", refreshOn = ["changed"] } = options;
+  const router = useRouter();
+  const [view, setView] = useState(initialView);
+  const [busy, setBusy] = useState(false);
+  // Replies can arrive out of order; only the latest request may set the view.
+  const latest = useRef(0);
+  const refreshOnRef = useRef(refreshOn);
+  useEffect(() => {
+    refreshOnRef.current = refreshOn;
+  });
+
+  const request = useCallback(
+    async (action: string, input?: unknown, method: Method = "POST") => {
+      const mine = ++latest.current;
+      const next = await gameAction<V & { finished?: boolean }>(gameType, shareCode, action, input, method);
+      if (mine === latest.current) setView(next);
+      return next;
+    },
+    [gameType, shareCode]
+  );
+
+  const refresh = useCallback(() => {
+    request(stateAction, undefined, "GET").catch(() => {});
+  }, [request, stateAction]);
+
+  // The broadcast only says that something changed; what this viewer may see
+  // of it comes from the server.
+  useGameSession(shareCode, {
+    onEvent: (name) => {
+      if (refreshOnRef.current.includes(name)) refresh();
+    },
+  });
+
+  // A phone that was asleep missed the broadcasts.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [refresh]);
+
+  /** Runs a session action. Resolves true if it succeeded; a refusal is shown as a toast. */
+  const act = useCallback(
+    async (action: string, input?: unknown) => {
+      setBusy(true);
+      try {
+        const next = await request(action, input);
+        if (next && typeof next === "object" && next.finished) router.push(`/sessions/${shareCode}/reveal`);
+        return true;
+      } catch (e) {
+        toast.error(e instanceof GameActionError ? e.message : "Something went wrong");
+        // 409: someone else's action landed first.
+        if (e instanceof GameActionError && e.status === 409) refresh();
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [request, refresh, router, shareCode]
+  );
+
+  return { view, setView, act, busy, refresh };
 }
