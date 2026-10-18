@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { SessionEvent } from "@/lib/realtime/events";
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
@@ -8,18 +9,32 @@ import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
  * Joins a private channel once Realtime has the viewer's token. Joined any
  * earlier, the first attempt goes out anonymous and is refused, and whatever
  * is sent before the retry a few seconds later is lost.
+ *
+ * `onSettled` runs each time the join is decided: `true` once in (again, after
+ * a reconnect), `false` when refused. Realtime keeps retrying a refused join.
  */
-export function subscribePrivately(supabase: SupabaseClient, channel: RealtimeChannel, isClosed: () => boolean) {
-  supabase.realtime.setAuth().then(
-    () => !isClosed() && channel.subscribe(),
-    () => !isClosed() && channel.subscribe()
-  );
+export function subscribePrivately(
+  supabase: SupabaseClient,
+  channel: RealtimeChannel,
+  isClosed: () => boolean,
+  onSettled?: (joined: boolean) => void
+) {
+  const subscribe = () => {
+    if (isClosed()) return;
+    channel.subscribe((status) => {
+      if (isClosed()) return;
+      if (status === "SUBSCRIBED") onSettled?.(true);
+      if (status === "CHANNEL_ERROR") onSettled?.(false);
+    });
+  };
+  supabase.realtime.setAuth().then(subscribe, subscribe);
 }
 
 export function useSession(
   shareCode: string | null,
   onEvent: (event: SessionEvent) => void
 ) {
+  const router = useRouter();
   const channelRef = useRef<RealtimeChannel | null>(null);
   // Keep the latest handler without resubscribing every render.
   const onEventRef = useRef(onEvent);
@@ -39,7 +54,17 @@ export function useSession(
         onEventRef.current(msg.payload as SessionEvent);
       });
     let closed = false;
-    subscribePrivately(supabase, channel, () => closed);
+    // Events sent while the join was under way never arrive, so once it is
+    // decided, ask the server for the page as it is now: a lobby that started
+    // in the meantime moves on to play. A refused join usually means the
+    // viewer was just removed; the server's page then says so. Refused joins
+    // keep retrying, so only the first of a run refreshes.
+    let refusedSinceJoin = false;
+    subscribePrivately(supabase, channel, () => closed, (joined) => {
+      if (!joined && refusedSinceJoin) return;
+      refusedSinceJoin = !joined;
+      router.refresh();
+    });
 
     channelRef.current = channel;
 
@@ -47,5 +72,5 @@ export function useSession(
       closed = true;
       channel.unsubscribe();
     };
-  }, [shareCode]);
+  }, [shareCode, router]);
 }

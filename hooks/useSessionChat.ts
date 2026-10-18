@@ -64,7 +64,8 @@ export function useSessionChat(shareCode: string) {
       .channel(`chat:${shareCode}`, { config: { private: true } })
       .on("broadcast", { event: "chat:message" }, () => load(true));
     let closed = false;
-    subscribePrivately(supabase, channel, () => closed);
+    // Messages posted while the join was under way only arrive by asking.
+    subscribePrivately(supabase, channel, () => closed, (joined) => joined && load(true));
     // A phone that was asleep missed the broadcasts.
     const onVisible = () => {
       if (document.visibilityState === "visible") load(true);
