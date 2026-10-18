@@ -1,8 +1,8 @@
 # Pool Dooks
 
-A multiplayer game platform. Play together in real time — fill in the blanks, roll dice, play chess, or build your own game.
+A multiplayer game platform. Play together in real time — fill in the blanks, roll dice, play chess, bluff at trivia, riff on acronyms, or build your own game.
 
-**Live at [pooldooks.com](https://pooldooks.com)**
+**Live at [pooldooks.com](https://pooldooks.com)** · source on [GitHub](https://github.com/orangelazarus/pool-dooks)
 
 ---
 
@@ -20,6 +20,12 @@ Roll six dice, set aside the scoring ones, and decide whether to bank or push yo
 ### Chess
 Standard two-player chess with full rules, including castling, en passant, promotion, and automatic draws. The host picks White, Black or Random, and plays untimed or with 5, 10 or 30 minutes per side. Either player can resign or offer a draw.
 
+### Subterfuge
+A trivia bluffing game. Everyone writes a lie convincing enough to pass for the answer to an obscure question, then tries to pick the truth from among them. Points for finding it, and for every friend your lie fools. 2–8 players.
+
+### Acrophobia
+Turn a random acronym into the funniest phrase you can, then vote for your favourite. The first players to the target meet in a face-off judged by everyone else. 3–12 players.
+
 ---
 
 ## How It Works
@@ -28,10 +34,18 @@ Standard two-player chess with full rules, including castling, en passant, promo
 - **Invite people or open it up** — share the 6-character code for a private game, or mark the game **public** so it's listed on the home page for anyone to join. A public game that hasn't started within 15 minutes is closed
 - **No account needed** — visitors pick a name and play as a guest, or sign in to keep a profile
 - **Play in real time** — Supabase Realtime keeps everyone in sync, with push notifications when it's your turn
+- **Chat** — every session has a chat for its players
+- **Come and go** — players can leave a lobby (and come back through the invite), and the host can remove someone, who can't rejoin. Games that can carry on without a player let people leave mid-game too
 - **Watch** — public games can be watched by anyone once they've started; when a public lobby is full, extra arrivals become spectators
 - **See the reveal**, then hit Play Again to take the same group into another game
 
 Private games are for their players only while in progress. AI story generation requires a real (non-guest) account.
+
+### Security model
+
+- **One way in.** Browsers never touch the database. Every read and write goes through the app's API routes, which check who is asking, and reach Postgres as the app's own role. Supabase's REST API is closed on every table (no privileges or policies for its browser roles); see [SETUP.md](SETUP.md).
+- **Private live updates.** Realtime channels are private: only a session's players (or anyone, for a public game) may listen, and only the server may send, so browsers can trust what arrives.
+- **Games can't reach past the SDK.** They get a context scoped to their own game and session; see [Plugin Architecture](#plugin-architecture).
 
 ---
 
@@ -76,7 +90,7 @@ export const plugin = defineGame<Content, State>({
 });
 ```
 
-**Core does the security.** Before a game's handler runs, core has authenticated the caller, checked the action's access level, checked the session belongs to that game and that the caller may see it, and validated the input. Handlers get a context scoped to one game and one session — content, version-checked state, turn, broadcast, push — and nothing else: the database, auth and push clients are not exposed to games.
+**Core does the security.** Before a game's handler runs, core has authenticated the caller, checked the action's access level, checked the session belongs to that game and that the caller may see it, and validated the input; a session action then runs in one transaction that locks the session and checks access again, and GET actions are read-only. Handlers get a context scoped to one game and one session — content (never someone else's private rows), version-checked state, turn, deadlines, broadcast, push — and nothing else: the database, auth and push clients are not exposed to games.
 
 **The boundary is enforced.** ESLint stops game code importing anything from core except the SDK, the UI components and `cn`. CI fails a pull request that changes a game directory together with core code, so a game that needs something new from core gets it as a separate PR first.
 
@@ -147,9 +161,10 @@ Never run `db:push` against a database that already has data — the migration s
 ### 4. Configure Supabase
 
 In the Supabase dashboard:
-- **SQL Editor** — run the RLS policies from `SETUP.md`
-- **Realtime** — enable for the `sessions` and `session_players` tables
+- **SQL Editor** — run `drizzle/0014_private_realtime.sql` (who may listen to live updates) and `drizzle/0015_lock_down_rest.sql` (closes the REST API on the app's tables). `db:push` creates tables only, so these are needed on a fresh database too. Details in [SETUP.md](SETUP.md)
 - **Auth** — enable anonymous sign-ins (for guest play)
+
+Realtime needs no per-table setting: the app uses private broadcast channels, not database change feeds.
 
 ### 5. Run
 
@@ -161,9 +176,21 @@ Open [http://localhost:3000](http://localhost:3000). Use port 3000: the lobby ca
 
 ---
 
+## Testing
+
+```bash
+npm test
+```
+
+Runs the Vitest suite: the game SDK's own tests and each game's `plugin.test.ts`. Games are tested with `@/lib/game-sdk/testing`, which runs a game in memory — no browser, HTTP or database — through the same access, input and transaction rules as production. See [Testing in the game guide](docs/creating-a-game.md#testing). CI runs lint, the tests and the core/game boundary check on every pull request.
+
+Note that `.env.local` points at the production database (there is no staging one), so browser testing against a local server uses real data. Supabase also limits guest sign-ups to about 30 an hour per IP, which a few automated multi-player runs use up.
+
+---
+
 ## Deployment
 
-Production runs on a Hetzner VPS behind Caddy, supervised by PM2. The app is built locally and shipped as a release that is smoke-tested and then swapped in — never built on the server. The full procedure is in [CLAUDE.md](CLAUDE.md).
+Production runs on a Hetzner VPS behind Caddy, supervised by PM2, with a firewall that only admits SSH and web traffic. The app is built locally and shipped as a release that is smoke-tested and then swapped in — never built on the server. The full procedure is in [CLAUDE.md](CLAUDE.md).
 
 ---
 
@@ -180,10 +207,11 @@ app/
     profile/
   (auth)/                   Login, signup, guest name
   api/
-    sessions/               Session lifecycle (create, join, start, answer, result, rematch)
+    sessions/               Session lifecycle (create, join, leave, kick, start, answer,
+                            chat, reveal, result, rematch)
     games/[gameType]/       Routed to the plugin's handleRequest
     game-content/           Generic plugin metadata
-    auth/                   Profile creation, username lookup
+    auth/                   Sign-in, profile creation, current user
     push/                   Web push subscription
 
 games/                      One self-contained plugin per game, built on lib/game-sdk
@@ -191,10 +219,12 @@ games/                      One self-contained plugin per game, built on lib/gam
   guess-the-number/
   farkle/                   Scoring engine (both rulesets)
   chess/                    Rules helpers, clock
+  subterfuge/               Question bank, scoring
+  acrophobia/               Acronyms, categories, face-off
 
 components/
-  session/                  Lobby, GuestJoin, RematchPrompt, ShareCode, SessionNotice
-  layout/                   Nav
+  session/                  Lobby, GuestJoin, PlayMenu, SessionChat, RematchPrompt, ShareCode, SessionNotice
+  layout/                   Nav, Footer, Logo + Wordmark
   ui/                       shadcn/ui components
 
 lib/
@@ -205,12 +235,13 @@ lib/
   sessions/                 Viewer access rules, public session listing
   auth/                     Guest sign-in
   db/                       Drizzle schema + client (core tables)
-  realtime/                 Event types + channel helpers
+  realtime/                 Event types + the server's private-channel sender
   push/                     VAPID + send helpers
   supabase/                 Server and browser clients
 
 hooks/
-  useSession.ts             Supabase Realtime subscription
+  useSession.ts             The session's private Realtime channel
+  useSessionChat.ts         Session chat: history, live updates, sending
   useGameState.ts           Client-side game state reducer
   usePushNotifications.ts   Push notification management
 

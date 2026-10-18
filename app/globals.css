@@ -33,6 +33,10 @@
   --text-color-primary: var(--primary-text);
   --text-color-secondary: var(--secondary-text);
   --text-color-destructive: var(--destructive-text);
+  --color-pool: var(--pool);
+  --text-color-pool: var(--pool-text);
+  --color-dooks: var(--dooks);
+  --text-color-dooks: var(--dooks-text);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -55,19 +59,23 @@
 }
 
 /*
- * Color scheme. Five brand colors, each with one job:
+ * Color scheme. Seven brand colors, each with one job:
  *
  *   #e5e059 yellow  primary      main buttons, current-turn and "now" markers
  *   #bdd358 lime    secondary    secondary badges, done / success states
  *   #ffffff white   background   page, cards, popovers
  *   #999799 gray    neutral      rings and borders; basis for muted surfaces and text
  *   #e5625e coral   destructive  resign, busts, errors, warnings
+ *   #2aa7de blue    pool         the wordmark's "Pool": swimming-pool water
+ *   #8b5a2b brown   dooks        the wordmark's "Dooks"
  *
- * Everything else here is a tint or shade derived from those. Two derived
- * values exist purely for legibility: yellow and coral are too light to read
- * as small text on white, and so is lime, so text in those colors uses a darker
- * shade (--primary-text, --secondary-text, --destructive-text) while fills and borders use the exact
- * brand color. Text on a yellow, lime or coral fill is near-black.
+ * Everything else here is a tint or shade derived from those. Some derived
+ * values exist purely for legibility: yellow, lime, coral and blue are too
+ * light to read as small text on white, so text in those colors uses a darker
+ * shade (--primary-text, --secondary-text, --destructive-text, --pool-text)
+ * while fills and borders use the exact brand color; in dark mode, brown is
+ * the one too dark to read and is lightened instead. Every text shade is at
+ * least 4.5:1 against the page. Text on a yellow, lime or coral fill is near-black.
  */
 :root {
   color-scheme: light dark;
@@ -91,6 +99,10 @@
   --destructive: #e5625e;
   --destructive-foreground: #2a0f0e;
   --destructive-text: #bf3a36;
+  --pool: #2aa7de;
+  --pool-text: #0c76a8;
+  --dooks: #8b5a2b;
+  --dooks-text: #8b5a2b;
   --border: #e0dfe0;
   --input: #cfcecf;
   --ring: #999799;
@@ -132,6 +144,8 @@
     --destructive: #e5625e;
     --destructive-foreground: #2a0f0e;
     --destructive-text: #e5625e;
+    --pool-text: #2aa7de;
+    --dooks-text: #c08a55;
     --border: rgb(255 255 255 / 12%);
     --input: rgb(255 255 255 / 16%);
     --ring: #999799;
