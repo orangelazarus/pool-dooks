@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { db, profiles } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { Nav } from "@/components/layout/Nav";
+import { Footer } from "@/components/layout/Footer";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient();
@@ -18,6 +19,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <div className="min-h-screen flex flex-col">
       <Nav user={user} profile={profile} />
       <main className="flex-1">{children}</main>
+      <Footer />
     </div>
   );
 }

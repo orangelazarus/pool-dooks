@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { LogOut, User } from "lucide-react";
-import { Logo } from "./Logo";
+import { Logo, Wordmark } from "./Logo";
 
 interface NavProps {
   user: { id: string; email?: string } | null;
@@ -34,7 +34,7 @@ export function Nav({ user, profile }: NavProps) {
       <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
         <Link href="/" className="flex items-center gap-2 font-bold text-lg shrink-0">
           <Logo className="text-2xl" />
-          <span className="hidden sm:inline">Pool Dooks</span>
+          <Wordmark className="hidden sm:inline" />
         </Link>
 
         <nav className="flex items-center gap-2">

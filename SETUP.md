@@ -48,63 +48,25 @@ This creates all tables in your Supabase Postgres database. Games have no tables
 
 Never run `db:push` against a database that already has data — the migration snapshot is stale and it can propose destructive changes. Later schema changes are hand-written, numbered SQL files in `drizzle/`, applied through the Supabase SQL Editor **before** the code that needs them is deployed.
 
-## 5. Configure Row-Level Security (RLS)
+## 5. Lock Down Supabase's REST API
 
-Run these SQL policies in Supabase SQL Editor:
+Supabase exposes every table in the `public` schema through its REST API, and by default its browser roles (`anon`, `authenticated`) get full privileges on new tables. This app never uses that API: browsers talk to Supabase only for Auth and Realtime, and every read and write goes through the app's API routes, which reach Postgres through `DATABASE_URL`.
 
-```sql
--- Enable RLS on all tables
-ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE game_content ENABLE ROW LEVEL SECURITY;
-ALTER TABLE game_state ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE session_players ENABLE ROW LEVEL SECURITY;
-ALTER TABLE answers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
+So the REST API is closed on every app table. Run `drizzle/0015_lock_down_rest.sql` in the Supabase SQL Editor. It:
 
--- Profiles: users can read all, update their own
-CREATE POLICY "profiles_select" ON profiles FOR SELECT TO authenticated USING (true);
-CREATE POLICY "profiles_insert" ON profiles FOR INSERT TO authenticated WITH CHECK (id = auth.uid());
-CREATE POLICY "profiles_update" ON profiles FOR UPDATE TO authenticated USING (id = auth.uid());
+- revokes all privileges on the `public` tables and sequences from `anon` and `authenticated`, and stops tables created later from being granted to them
+- drops any policies for those roles
+- leaves row-level security **on** for every table with **no** policies, so even a grant added by mistake later exposes nothing
 
--- Game storage (game_content, game_state): no policies on purpose. With RLS on
--- and no policy, the REST API denies everyone; only the app server reaches
--- these tables, through lib/game-sdk.
+Don't add RLS policies for browser roles. If a feature seems to need one, it needs an API route instead.
 
--- Sessions: readable by all authenticated, only host updates
-CREATE POLICY "sessions_select" ON sessions FOR SELECT TO authenticated USING (true);
-CREATE POLICY "sessions_insert" ON sessions FOR INSERT TO authenticated WITH CHECK (host_id = auth.uid());
-CREATE POLICY "sessions_update" ON sessions FOR UPDATE TO authenticated USING (host_id = auth.uid());
+The app's own database role must be able to reach every table without policies: give it direct grants and `BYPASSRLS` (`ALTER ROLE <app_role> BYPASSRLS`), or use the tables' owner. It must not be a member of `anon` or `authenticated`.
 
--- Session players: readable by session members
-CREATE POLICY "session_players_select" ON session_players FOR SELECT TO authenticated USING (true);
-CREATE POLICY "session_players_insert" ON session_players FOR INSERT TO authenticated WITH CHECK (player_id = auth.uid());
-CREATE POLICY "session_players_update" ON session_players FOR UPDATE TO authenticated USING (player_id = auth.uid());
+## 6. Private Realtime Channels
 
--- Answers: insert own, select only when session completed or own row
-CREATE POLICY "answers_insert" ON answers FOR INSERT TO authenticated WITH CHECK (player_id = auth.uid());
-CREATE POLICY "answers_select" ON answers FOR SELECT TO authenticated USING (
-  player_id = auth.uid() OR
-  EXISTS (SELECT 1 FROM sessions s WHERE s.id = session_id AND s.status = 'completed')
-);
+Live updates use Realtime **broadcast** on private channels (`session:<code>`, `chat:<code>`), not database change feeds, so there's nothing to switch on per table.
 
--- Push subscriptions: users manage their own
-CREATE POLICY "push_subs_all" ON push_subscriptions FOR ALL TO authenticated USING (user_id = auth.uid());
-
--- Service role bypass (for server-side operations)
-CREATE POLICY "service_role_bypass" ON answers FOR ALL TO service_role USING (true);
-CREATE POLICY "service_role_bypass_sessions" ON sessions FOR ALL TO service_role USING (true);
-```
-
-Every table in the `public` schema is exposed through Supabase's REST API, so a table without RLS is readable and writable by anyone holding the anon key.
-
-The app's own database role needs to bypass RLS (`ALTER ROLE <app_role> BYPASSRLS`), or be the tables' owner, for the server to reach `game_content` and `game_state`.
-
-## 6. Enable Realtime in Supabase
-
-In Supabase Dashboard → Realtime → enable Realtime for:
-- `sessions` table
-- `session_players` table
+Run `drizzle/0014_private_realtime.sql` in the Supabase SQL Editor. It adds the one policy that decides who may listen: a session's active players, or anyone if the session is public. There is deliberately no policy for sending, so only the server can broadcast. It does so with `SUPABASE_SERVICE_ROLE_KEY`, which must therefore be set wherever the app runs. Without the policy, every browser's subscription is refused and nothing updates live.
 
 ## 7. Enable Anonymous Sign-Ins
 
@@ -126,20 +88,21 @@ Use port 3000: the lobby calls back to `NEXT_PUBLIC_APP_URL` when someone joins,
 
 ## PWA Icons
 
-Add icons to `/public/icons/`:
-- `icon-192.png` — 192×192px
-- `icon-512.png` — 512×512px
+The icons live in `/public/icons/`:
+- `icon-192.png`, `icon-512.png` — the installable app (`manifest.json`)
+- `favicon-32.png`, `favicon-96.png` — browser tabs
+- `apple-touch-icon.png` — iOS home screen
 
 ## Project Structure
 
 ```
 app/          Next.js App Router pages + API routes
-games/        One self-contained plugin per game (pool-dooks, guess-the-number, farkle, chess)
+games/        One self-contained plugin per game (pool-dooks, guess-the-number, farkle, chess, subterfuge, acrophobia)
 components/   Shared React components (session, layout, ui)
-hooks/        Custom React hooks (useSession, useGameState, usePushNotifications)
+hooks/        Custom React hooks (useSession, useSessionChat, useGameState, usePushNotifications)
 lib/          Core logic (db schema, game SDK, game registry, session access, auth, push, realtime)
 drizzle/      Numbered SQL migrations
-scripts/      sync-games.mjs — generates the game registry
+scripts/      sync-games.mjs (generates the game registry), check-pr-boundary.mjs (CI: games and core in separate PRs)
 public/       Static assets (manifest.json, sw.js, icons)
 proxy.ts      Auth gate: what logged-out visitors can reach
 ```

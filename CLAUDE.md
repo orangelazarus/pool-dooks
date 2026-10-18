@@ -18,13 +18,40 @@ Deploy is a release swap, so a bad build never reaches users:
    `git archive --format=tar HEAD | ssh ... 'tar x -C /var/www/madlibs-next'`
 3. Copy the **server's** `.env` / `.env.local` into it — never ship local ones
 4. `npm ci --include=dev` in `/var/www/madlibs-next` (installing is fine; building is not)
-5. Build locally, ship `.next` minus `cache`:
-   `tar czf - --exclude=./cache -C .next . | ssh ... 'tar xzf - -C /var/www/madlibs-next/.next'`
+5. Build locally from a clean `rm -rf .next`, **copy `.next` (minus `cache`) to a
+   snapshot dir**, and ship the snapshot, run in the background (it takes minutes):
+   `tar czf - -C <snapshot> . | ssh ... 'tar xzf - -C /var/www/madlibs-next/.next'`.
+   Rebuilding while a live `.next` streams mixes two builds. Before the swap, wait
+   until no `tar` runs on the server, then compare BUILD_ID and file counts on both
+   ends and check `.next/node_modules/pg-<hash>` is a symlink: a 0-byte file there
+   means the upload is unfinished or was cut off.
 6. Smoke-test on `PORT=3100` while :3000 still serves the old release
 7. `mv` swap, `pm2 restart madlibs --update-env`, and swap back if `/login` isn't 200
 
 Kill the smoke instance by PID from `ss -ltnp`. `pkill -f "PORT=3100"` matches the
-deploy script's own command line and kills it mid-run.
+deploy script's own command line and kills it mid-run. Keep the two newest
+`/var/www/madlibs-old-*` folders as rollback points and delete older ones.
+
+The server's `.env` must have `SUPABASE_SERVICE_ROLE_KEY`: the server sends every
+live update with it (`lib/realtime/server.ts`), and without it nothing updates live.
+
+On the box: `ufw` admits only 22/tcp, 80/tcp, 443/tcp and 443/udp (Caddy's HTTP/3),
+so Next's :3000 is reachable only through Caddy. Open a port with `ufw allow`
+before relying on it. Caddy writes a JSON access log to `/var/log/caddy/access.log`
+(it rolls itself); pm2 runs `madlibs` with `--time` (saved), so its logs carry
+timestamps. If `caddy validate` (run as root) creates the log file, `chown
+caddy:caddy` it or the next `systemctl reload caddy` fails. The old config keeps
+serving in the meantime.
+
+# Testing against the real thing
+
+There is no staging database: `.env.local`'s `DATABASE_URL` is production, so a
+local server is a production client. Run browser tests on **port 3000** (the
+lobby calls back to `NEXT_PUBLIC_APP_URL`). Each test browser is a new guest, and
+Supabase allows about **30 guest sign-ups an hour per IP**. When it runs out,
+guest pages just stall, which looks like an app bug; look for a 429 from
+`/auth/v1/signup` first. Afterwards, delete the test guests (profiles and auth
+users) and their sessions, and unlist any public test sessions.
 
 # Games and core are separate
 
@@ -57,6 +84,16 @@ only tracks `0000`, so the snapshot is stale and **`npm run db:push` can propose
 destructive changes against production** — don't use it. Apply the explicit
 `ALTER TABLE` via the Supabase SQL Editor instead. There is no staging database;
 `.env.local`'s `DATABASE_URL` is production.
+
+The app's role `madlibs_app` can't run DDL (it doesn't own the tables), so hand
+the user the SQL rather than trying it from a script. It *can* read
+`information_schema` and `pg_policies`, which is how to check a migration landed.
+
+Supabase's REST API is closed on the app's tables (`0015`): the browser roles
+`anon` and `authenticated` have no privileges and no policies, and RLS is on.
+Keep it that way. A new table needs no grants or policies, and browsers reach
+data only through API routes. Realtime's access check is the SECURITY DEFINER
+function `can_listen_to_session` (`0014`); change who may listen there.
 
 # Renamed from madlibs
 
