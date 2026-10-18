@@ -19,8 +19,9 @@ export async function GET(
   }
 
   const plugin = getPlugin(session.gameType);
+  // Seen as the host, who was allowed to start a game with it.
   const contentMeta = session.gameContentId
-    ? await plugin.getContentMeta(session.gameContentId).catch(() => null)
+    ? await plugin.getContentMeta(session.gameContentId, session.hostId).catch(() => null)
     : null;
 
   const players = await db

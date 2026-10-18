@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import type { Rematch } from "@/lib/db/schema";
+import { sendSessionEvent } from "@/lib/realtime/server";
 import { z } from "zod";
 
 const RespondSchema = z.object({ accepted: z.boolean() });
@@ -55,14 +56,7 @@ export async function POST(
     .from(profiles)
     .where(eq(profiles.id, user.id));
 
-  await supabase.channel(`session:${code}`).send({
-    type: "broadcast",
-    event: "rematch:responded",
-    payload: {
-      type: "rematch:responded",
-      payload: { playerId: user.id, username: profile?.username ?? "A player", accepted },
-    },
-  });
+  await sendSessionEvent(code, "rematch:responded", { playerId: user.id, username: profile?.username ?? "A player", accepted });
 
   return NextResponse.json({ rematch });
 }

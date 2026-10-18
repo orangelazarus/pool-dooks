@@ -3,7 +3,7 @@
 // real route (./checks), and through the same transaction rules as ./tx — a
 // handler that throws an unexpected error leaves nothing behind, a GameError
 // keeps what was written before it, and broadcasts and notifications are
-// recorded only once the action "commits".
+// recorded only once the action "commits". GET actions are read-only, as in production.
 //
 //   const t = createTestSession(plugin, { players: ["ann", "bob", "cat"], content: { rounds: 5 } });
 //   await t.start();
@@ -12,7 +12,7 @@
 //
 // Only for *.test.ts files; never import it from game code that ships.
 import { checkSessionAccess, parseInput } from "./checks";
-import { GameError, StateConflictError } from "./errors";
+import { GameError, READ_ONLY_MESSAGE, StateConflictError } from "./errors";
 import { mutateState } from "./mutate";
 import type {
   ContentApi,
@@ -109,6 +109,11 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
   const notifications: RecordedNotification[] = [];
   /** What the current action has sent so far; delivered on commit. */
   let pending: { broadcasts: RecordedBroadcast[]; notifications: RecordedNotification[] } | null = null;
+  /** While a GET action runs. Production's read-only transaction refuses the same things. */
+  let readOnly = false;
+  const writable = () => {
+    if (readOnly) throw new Error(READ_ONLY_MESSAGE);
+  };
 
   const viewerFor = (id: string | null): Viewer | null => {
     if (id === null) return null;
@@ -123,10 +128,12 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
       return store.state ? clone(store.state) : null;
     },
     async init(data) {
+      writable();
       if (!store.state) store.state = { data: clone(data), version: 0 };
       return clone(store.state);
     },
     async update(data, { expectedVersion }) {
+      writable();
       if (!store.state || store.state.version !== expectedVersion) throw new StateConflictError();
       store.state = { data: clone(data), version: expectedVersion + 1 };
       return clone(store.state);
@@ -171,7 +178,10 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
       timerSeconds,
       content: clone(content),
     };
-    const send = (b: RecordedBroadcast) => (pending ? pending.broadcasts.push(b) : broadcasts.push(b));
+    const send = (b: RecordedBroadcast) => {
+      writable();
+      return pending ? pending.broadcasts.push(b) : broadcasts.push(b);
+    };
 
     return {
       gameType: def.gameType,
@@ -187,11 +197,13 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
         async set(inMs, key) {
           if (!Number.isFinite(inMs) || inMs < 0) throw new Error("deadline.set: inMs must be a non-negative number");
           if (!key) throw new Error("deadline.set: a key is required");
+          writable();
           store.deadline = { at: new Date(now + inMs), key };
           send({ name: "game:deadline", data: { at: store.deadline.at.toISOString(), key } });
           return clone(store.deadline);
         },
         async clear() {
+          writable();
           store.deadline = null;
           send({ name: "game:deadline", data: null });
         },
@@ -202,11 +214,13 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
       turn: {
         async set(playerId) {
           if (!players.some((p) => p.id === playerId)) throw new GameError(400, "That player isn't in this game");
+          writable();
           store.currentPlayerId = playerId;
           session.currentPlayerId = playerId;
         },
       },
       async finish() {
+        writable();
         if (store.status !== "in_progress") return false;
         store.status = "completed";
         store.completedAt = new Date();
@@ -218,6 +232,7 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
         send({ name, data: clone(data) });
       },
       async notify(to, message) {
+        writable();
         const wanted = to === "others" ? players.map((p) => p.id).filter((id) => id !== viewer?.id) : [to].flat();
         const recipients = [...new Set(wanted)].filter((id) => players.some((p) => p.id === id));
         if (recipients.length === 0) return;
@@ -361,7 +376,12 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
           if (refused) throw refusal(refused);
           const parsed = parseInput(action, input ?? {});
           if (!parsed.ok) throw refusal(parsed.refusal);
-          return transaction(async () => ((await action.handler(ctx, parsed.value)) ?? { ok: true }) as T);
+          readOnly = action.method === "GET";
+          try {
+            return await transaction(async () => ((await action.handler(ctx, parsed.value)) ?? { ok: true }) as T);
+          } finally {
+            readOnly = false;
+          }
         },
         /** What buildPlayProps sends this viewer's browser. */
         async playProps() {

@@ -4,6 +4,7 @@ import { db, sessions, sessionPlayers } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
 import { getPlugin } from "@/lib/games/registry";
 import { sendPushToUsers } from "@/lib/push/send";
+import { sendSessionEvent } from "@/lib/realtime/server";
 import { expireIfStale } from "@/lib/sessions/expiry";
 import { GameError } from "@/lib/game-sdk";
 import { executor, runInTransaction } from "@/lib/game-sdk/tx";
@@ -77,15 +78,7 @@ export async function POST(
   if ("error" in started) return NextResponse.json({ error: started.error }, { status: started.status });
   const { updated, players, tokenOrder, resolvedFirstPlayerId } = started;
 
-  // Broadcast session:started
-  await supabase.channel(`session:${code}`).send({
-    type: "broadcast",
-    event: "session:started",
-    payload: {
-      type: "session:started",
-      payload: { tokenOrder, firstPlayerId: resolvedFirstPlayerId },
-    },
-  });
+  await sendSessionEvent(code, "session:started", { tokenOrder, firstPlayerId: resolvedFirstPlayerId });
 
   const nonHostIds = players
     .map((p) => p.playerId)

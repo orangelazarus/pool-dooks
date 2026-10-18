@@ -7,7 +7,7 @@ import { db, sessions } from "@/lib/db";
 import type { Session } from "@/lib/db/schema";
 import type { GamePlugin } from "@/lib/games/types";
 import { buildContentContext, buildSessionContext } from "./context";
-import { claimDueDeadline, getContent, getDeadline } from "./storage";
+import { claimDueDeadline, getDeadline, getVisibleContent, lockSession } from "./storage";
 import { GameError } from "./errors";
 import { checkContentAuth, checkSessionAccess, parseInput, type Refusal } from "./checks";
 import { runInTransaction } from "./tx";
@@ -54,7 +54,11 @@ async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path
 
       const input = await readInput(req, action);
       if (!input.ok) return input.response;
-      return NextResponse.json((await action.handler(ctx, input.value)) ?? { ok: true });
+      const result =
+        req.method === "GET"
+          ? await runInTransaction(() => action.handler(ctx, input.value), { readOnly: true })
+          : await action.handler(ctx, input.value);
+      return NextResponse.json(result ?? { ok: true });
     }
 
     // /api/games/<gameType>/sessions/<shareCode>/<action>
@@ -91,8 +95,23 @@ async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path
 
       const input = await readInput(req, action);
       if (!input.ok) return input.response;
+
+      if (req.method === "GET") {
+        const result = await runInTransaction(() => action.handler(ctx, input.value), { readOnly: true });
+        return NextResponse.json(result ?? { ok: true });
+      }
       // All of the handler's writes commit together; realtime and push go out after.
-      const result = await runInTransaction(() => action.handler(ctx, input.value));
+      const result = await runInTransaction(async () => {
+        // The check above ran before the transaction: a player could have been
+        // removed, or the game ended, since. Lock the session (as leaving does)
+        // and check again against the roster as it is now.
+        const locked = await lockSession(row.id);
+        if (!locked) throw new GameError(404, "Session not found");
+        const current = await buildSessionContext<C, S>(def.gameType, locked, { viewer: ctx.viewer });
+        const refusedNow = checkSessionAccess(action, current, current.session);
+        if (refusedNow) throw new GameError(refusedNow.status, refusedNow.error, refusedNow.extra);
+        return action.handler(current, input.value);
+      });
       return NextResponse.json(result ?? { ok: true });
     }
 
@@ -163,8 +182,8 @@ export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>):
     usesDeadlines: !!def.onDeadline,
     supportsLeaving: !!def.onPlayerLeft,
 
-    async getContentMeta(gameContentId) {
-      const content = await getContent(def.gameType, gameContentId);
+    async getContentMeta(gameContentId, viewerId) {
+      const content = await getVisibleContent(def.gameType, gameContentId, viewerId);
       if (!content) throw new Error("Game content not found");
       return { title: content.title };
     },

@@ -57,8 +57,9 @@ export function useSessionChat(shareCode: string) {
 
   useEffect(() => {
     // The broadcast carries no text, only word that there is something new.
+    // Private, like the session channel: only the server can send on it.
     const channel = createClient()
-      .channel(`chat:${shareCode}`)
+      .channel(`chat:${shareCode}`, { config: { private: true } })
       .on("broadcast", { event: "chat:message" }, () => load(true))
       .subscribe();
     // A phone that was asleep missed the broadcasts.

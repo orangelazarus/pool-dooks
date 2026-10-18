@@ -4,6 +4,7 @@ import { db, sessions, answers, sessionPlayers, profiles } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { sendPushToUser, sendPushToUsers } from "@/lib/push/send";
+import { sendSessionEvent } from "@/lib/realtime/server";
 import { getPlugin } from "@/lib/games/registry";
 import { answerPush, nextTurnPush, type AnnouncedAnswer } from "@/lib/sessions/answer-announcement";
 
@@ -123,27 +124,16 @@ export async function POST(
     }
 
     // Non-critical: broadcast answer confirmed
-    supabase.channel(`session:${code}`).send({
-      type: "broadcast",
-      event: "answer:confirmed",
-      payload: {
-        type: "answer:confirmed",
-        payload: { tokenId: parsed.data.tokenId, playerId: user.id, answer: announced ?? undefined },
-      },
-    }).catch(() => {});
+    void sendSessionEvent(code, "answer:confirmed", {
+      tokenId: parsed.data.tokenId,
+      playerId: user.id,
+      answer: announced ?? undefined,
+    });
 
     if (isComplete) {
       Promise.all([
-        supabase.channel(`session:${code}`).send({
-          type: "broadcast",
-          event: "session:completed",
-          payload: { type: "session:completed", payload: { completedAt: completedAt.toISOString() } },
-        }),
-        supabase.channel(`session:${code}`).send({
-          type: "broadcast",
-          event: "session:revealed",
-          payload: { type: "session:revealed", payload: {} },
-        }),
+        sendSessionEvent(code, "session:completed", { completedAt: completedAt.toISOString() }),
+        sendSessionEvent(code, "session:revealed", {}),
         sendPushToUsers(otherIds, {
           title: "Story revealed!",
           body: "All blanks filled — come see the hilarious result!",
@@ -157,18 +147,11 @@ export async function POST(
       const bystanderIds = otherIds.filter((id) => id !== nextPlayerId);
 
       Promise.all([
-        supabase.channel(`session:${code}`).send({
-          type: "broadcast",
-          event: "turn:changed",
-          payload: {
-            type: "turn:changed",
-            payload: {
-              currentTokenId: nextTokenId!,
-              currentPlayerId: nextPlayerId!,
-              tokenIndex: nextIndex,
-              total: tokenOrder.length,
-            },
-          },
+        sendSessionEvent(code, "turn:changed", {
+          currentTokenId: nextTokenId!,
+          currentPlayerId: nextPlayerId!,
+          tokenIndex: nextIndex,
+          total: tokenOrder.length,
         }),
         nextPlayerId !== user.id
           ? sendPushToUser(nextPlayerId!, nextTurnPush(playUrl, hints.nextTokenLabel, announced))

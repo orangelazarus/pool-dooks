@@ -7,6 +7,7 @@ import { getViewerRole } from "@/lib/sessions/access";
 import { addMessage, isFlooding, isQuiet, listMessages } from "@/lib/sessions/chat";
 import { MAX_MESSAGE_LENGTH } from "@/lib/sessions/chat-types";
 import { sendPushToUsers } from "@/lib/push/send";
+import { sendChatPing } from "@/lib/realtime/server";
 
 const PostSchema = z.object({ body: z.string().trim().min(1).max(MAX_MESSAGE_LENGTH) });
 const MAX_PUSH_BODY = 120;
@@ -64,13 +65,9 @@ export async function POST(req: NextRequest, { params }: Params) {
   const notify = await isQuiet(session.id);
   const message = await addMessage(session.id, user.id, username, parsed.data.body);
 
-  // The channel can be joined by anyone who knows its name, so this says only
-  // that there is something new. Browsers fetch it through GET, which checks
-  // who is asking.
-  await supabase
-    .channel(`chat:${code}`)
-    .send({ type: "broadcast", event: "chat:message", payload: {} })
-    .then(() => {}, () => {});
+  // Says only that there is something new. Browsers fetch it through GET,
+  // which checks who is asking.
+  await sendChatPing(code);
 
   if (notify) {
     const players = await db

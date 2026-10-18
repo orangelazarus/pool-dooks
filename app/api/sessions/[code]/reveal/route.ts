@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { db, sessions, sessionPlayers } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import { sendPushToUsers } from "@/lib/push/send";
+import { sendSessionEvent } from "@/lib/realtime/server";
 
 export async function POST(
   _req: NextRequest,
@@ -20,11 +21,7 @@ export async function POST(
     return NextResponse.json({ error: "Session not complete" }, { status: 400 });
   }
 
-  await supabase.channel(`session:${code}`).send({
-    type: "broadcast",
-    event: "session:revealed",
-    payload: { type: "session:revealed", payload: {} },
-  });
+  await sendSessionEvent(code, "session:revealed", {});
 
   const players = await db
     .select({ playerId: sessionPlayers.playerId })

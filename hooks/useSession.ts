@@ -19,8 +19,10 @@ export function useSession(
     if (!shareCode) return;
 
     const supabase = createClient();
+    // Private: Realtime lets in only this session's players (anyone, if it's
+    // public), and only the server can send, so events can be trusted.
     const channel = supabase
-      .channel(`session:${shareCode}`)
+      .channel(`session:${shareCode}`, { config: { private: true } })
       .on("broadcast", { event: "*" }, (msg) => {
         onEventRef.current(msg.payload as SessionEvent);
       })
