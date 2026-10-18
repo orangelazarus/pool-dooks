@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Screenshots from scripts/e2e runs that stopped on an error
+/scripts/e2e/shots/
