@@ -21,26 +21,16 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const { createClient } = await import("@/lib/supabase/client");
-      const supabase = createClient();
-
-      let email = identifier.trim();
-
-      // If no @ sign, treat as username — look up the email
-      if (!email.includes("@")) {
-        const res = await fetch(`/api/auth/login-lookup?username=${encodeURIComponent(email)}`);
-        if (!res.ok) {
-          toast.error("No account found with that username");
-          setLoading(false);
-          return;
-        }
-        const data = await res.json();
-        email = data.email;
-      }
-
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) {
-        toast.error(error.message);
+      // The server signs in (an email or a username) and sets the session
+      // cookies, so a username's email address never reaches the browser.
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier: identifier.trim(), password }),
+      }).catch(() => null);
+      if (!res?.ok) {
+        const data = await res?.json().catch(() => null);
+        toast.error(typeof data?.error === "string" ? data.error : "Couldn't sign in. Please try again.");
       } else {
         const next = new URLSearchParams(window.location.search).get("next") ?? "/home";
         router.push(next);
