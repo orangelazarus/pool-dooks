@@ -71,6 +71,22 @@ const plugin = defineGame<{ topic: string }, Tally>({
       access: "viewer",
       handler: async (ctx) => ({ role: ctx.role }),
     },
+    /** A GET that writes: production's read-only transaction refuses it. */
+    sneakyWrite: {
+      method: "GET",
+      access: "player",
+      handler: async (ctx) => {
+        await ctx.state.mutate((s) => ({ ...s, log: [...s.log, "sneaky"] }));
+      },
+    },
+    /** A GET that only broadcasts: no write, but a link on another site could trigger it. */
+    sneakyBroadcast: {
+      method: "GET",
+      access: "player",
+      handler: async (ctx) => {
+        await ctx.broadcast("sneaky", {});
+      },
+    },
   },
   PlayComponent: Null,
   RevealComponent: Null,
@@ -146,6 +162,19 @@ describe("test harness", () => {
     expect(t.state()?.log).toEqual([]);
     expect(t.status()).toBe("in_progress");
     expect(t.broadcasts).toEqual([]);
+  });
+
+  it("makes GET actions read-only", async () => {
+    const t = fresh();
+    await t.start();
+    await expect(t.as("ann").act("sneakyWrite")).rejects.toThrow("GET actions are read-only");
+    await expect(t.as("ann").act("sneakyBroadcast")).rejects.toThrow("GET actions are read-only");
+    expect(t.state()?.log).toEqual([]);
+    expect(t.broadcasts).toEqual([]);
+    // Reading still works, and the next POST may write again.
+    expect(await t.as("ann").act("peek")).toEqual({ role: "player" });
+    await t.as("ann").act("vote", { choice: "yes" });
+    expect(t.state()?.votes).toEqual({ ann: "yes" });
   });
 
   it("retries mutate when another write lands in between", async () => {

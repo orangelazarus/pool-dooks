@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPlugin } from "@/lib/games/registry";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
@@ -12,7 +13,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const plugin = getPlugin(gameType);
-    const meta = await plugin.getContentMeta(gameContentId);
+    const { data: { user } } = await (await createClient()).auth.getUser();
+    const meta = await plugin.getContentMeta(gameContentId, user?.id ?? null);
     return NextResponse.json({ ...meta, supportsRandomize: plugin.supportsRandomize, timer: plugin.timer });
   } catch {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

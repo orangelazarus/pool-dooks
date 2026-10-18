@@ -177,6 +177,7 @@ Your game's API is declared, not routed by hand. Before a handler runs, core has
 - checked the action's `auth` or `access` level
 - for session actions: checked the session belongs to this game, that the caller may see it (private games are refused to non-players), and that it is in progress
 - validated the request against `input`
+- for session actions other than GET: locked the session and checked again, inside the action's transaction, so a player removed a moment ago can't still act
 
 | | Levels | URL |
 |---|---|---|
@@ -186,6 +187,8 @@ Your game's API is declared, not routed by hand. Before a handler runs, core has
 Use `auth: "account"` for anything costly or abusable — a guest account costs nothing to create.
 
 Actions default to `POST`. Set `method: "GET"` for reads; input then comes from the query string, so use `z.coerce` for numbers. Player and host actions require the session to be in progress unless you set `when: "any"`.
+
+**GET actions are read-only.** They run in a read-only transaction, and changing state, broadcasting or notifying from one fails (the test harness fails the same way). A link on another site can make a signed-in browser send a GET, so anything that changes the game must be a `POST`.
 
 To refuse a request, `throw new GameError(status, message)`. Anything else a handler throws is logged and returned as a generic 500, so internals never reach the client.
 
@@ -198,13 +201,13 @@ One subtlety: a `GameError` is a reply, not a failure. Writes made before throwi
 | | |
 |---|---|
 | `ctx.viewer` | `{ id, username, isGuest }` or `null` |
-| `ctx.content` | `create`, `get`, `list`, `update`, `remove` — this game's rows only. `list` never returns someone else's private content; `update` and `remove` are author-only. |
+| `ctx.content` | `create`, `get`, `list`, `update`, `remove` — this game's rows only. `get` and `list` never return someone else's private content; `update` and `remove` are author-only; `create` allows 100 a day per author. |
 | `ctx.session` | Read-only: `shareCode`, `status`, `hostId`, `isPublic`, `currentPlayerId`, `players`, and `content` (the row being played) |
 | `ctx.role` | `"player"`, `"observer"`, or `null` |
 | `ctx.state` | `get()`, `init(data)`, `update(data, { expectedVersion })`, `mutate(change)` |
 | `ctx.turn.set(playerId)` | Whose turn it is (must be one of this session's players) |
 | `ctx.finish()` | Ends the game and sends everyone to the reveal |
-| `ctx.broadcast(name, data)` | Realtime message to everyone with the session open |
+| `ctx.broadcast(name, data)` | Realtime message to everyone with the session open. The channel is private (players, plus anyone for a public game) and only the server can send on it, so browsers can trust it — but every listener sees `data`. |
 | `ctx.notify(to, { title, body })` | Push to this session's players; `"others"` is everyone but the caller. Core sets the link. |
 | `ctx.answers()` | Shared turn engine only: answers given so far |
 

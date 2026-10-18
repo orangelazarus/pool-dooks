@@ -6,6 +6,7 @@ import { generateShareCode } from "@/lib/utils/share-code";
 import { getPlugin } from "@/lib/games/registry";
 import type { Rematch } from "@/lib/db/schema";
 import { sendPushToUsers } from "@/lib/push/send";
+import { sendSessionEvent } from "@/lib/realtime/server";
 import { z } from "zod";
 
 const CreateSchema = z.object({
@@ -39,10 +40,10 @@ export async function POST(req: NextRequest) {
   const { gameType, gameContentId, randomizeOrder, isPublic, rematchFrom, skipRematch } = parsed.data;
   const timerSeconds = parsed.data.timerSeconds ?? null;
 
-  // Validate the game type and content exist via the plugin
+  // Validate the game type, and that the content exists and this user may play it
   try {
     const plugin = getPlugin(gameType);
-    await plugin.getContentMeta(gameContentId);
+    await plugin.getContentMeta(gameContentId, user.id);
     if (timerSeconds !== null && !plugin.timer?.options.includes(timerSeconds)) {
       return NextResponse.json({ error: "That timer isn't offered for this game" }, { status: 400 });
     }
@@ -139,11 +140,7 @@ export async function POST(req: NextRequest) {
       .where(eq(sessions.id, previous.id));
 
     // Tell everyone still watching the old session where the next round lives.
-    await supabase.channel(`session:${previous.shareCode}`).send({
-      type: "broadcast",
-      event: "rematch:ready",
-      payload: { type: "rematch:ready", payload: { shareCode } },
-    });
+    await sendSessionEvent(previous.shareCode, "rematch:ready", { shareCode });
 
     await sendPushToUsers(
       roster.filter((id) => id !== user.id),

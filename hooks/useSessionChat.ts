@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { subscribePrivately } from "@/hooks/useSession";
 import type { ChatMessage } from "@/lib/sessions/chat-types";
 
 interface ChatState {
@@ -57,16 +58,20 @@ export function useSessionChat(shareCode: string) {
 
   useEffect(() => {
     // The broadcast carries no text, only word that there is something new.
-    const channel = createClient()
-      .channel(`chat:${shareCode}`)
-      .on("broadcast", { event: "chat:message" }, () => load(true))
-      .subscribe();
+    // Private, like the session channel: only the server can send on it.
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`chat:${shareCode}`, { config: { private: true } })
+      .on("broadcast", { event: "chat:message" }, () => load(true));
+    let closed = false;
+    subscribePrivately(supabase, channel, () => closed);
     // A phone that was asleep missed the broadcasts.
     const onVisible = () => {
       if (document.visibilityState === "visible") load(true);
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
+      closed = true;
       channel.unsubscribe();
       document.removeEventListener("visibilitychange", onVisible);
     };

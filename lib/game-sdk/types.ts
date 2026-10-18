@@ -73,8 +73,9 @@ export interface ContentListOptions {
 
 /** A game's own content rows. Every call is confined to that game's type. */
 export interface ContentApi<C> {
-  /** The viewer becomes the author; requires a signed-in viewer. */
+  /** The viewer becomes the author; requires a signed-in viewer. At most 100 a day per author, across games (429 after). */
   create(input: { title: string; data: C; isPublic?: boolean }): Promise<ContentRecord<C>>;
+  /** A row the viewer may see: public, or their own. Someone else's private row is null, as if it didn't exist. */
   get(id: string): Promise<ContentRecord<C> | null>;
   list(options?: ContentListOptions): Promise<ContentRecord<C>[]>;
   /** Author only. */
@@ -151,7 +152,12 @@ export interface SessionContext<C, S> extends ContentContext<C> {
    * reveal. Returns false if it had already ended.
    */
   finish(): Promise<boolean>;
-  /** Realtime message to everyone with this session open. */
+  /**
+   * Realtime message to everyone with this session open: its players, and
+   * anyone watching a public game. Only the server can send on the channel, so
+   * browsers can trust it came from here, but everyone listening sees `data`:
+   * never put one player's secrets in it.
+   */
   broadcast(name: string, data: unknown): Promise<void>;
   /**
    * Push notification to players of this session — "others" is everyone but
@@ -165,7 +171,12 @@ export interface SessionContext<C, S> extends ContentContext<C> {
 type Method = "GET" | "POST" | "PUT" | "DELETE";
 
 interface ActionBase<I> {
-  /** Default POST. For GET the input is read from the query string, so use z.coerce for numbers. */
+  /**
+   * Default POST. For GET the input is read from the query string, so use
+   * z.coerce for numbers. GET actions are read-only: changing state,
+   * broadcasting or notifying fails, because a link on another site can make
+   * a signed-in browser send a GET.
+   */
   method?: Method;
   /** Validated before the handler runs; the handler receives the parsed value. */
   input?: z.ZodType<I>;

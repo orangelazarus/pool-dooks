@@ -7,7 +7,7 @@
 // games that say how to carry on without someone (onPlayerLeft).
 import { and, asc, eq } from "drizzle-orm";
 import { sessions, sessionPlayers } from "@/lib/db";
-import { createClient } from "@/lib/supabase/server";
+import { sendSessionEvent } from "@/lib/realtime/server";
 import { getPlugin } from "@/lib/games/registry";
 import { executor, runInTransaction } from "@/lib/game-sdk/tx";
 import { GameError } from "@/lib/game-sdk/errors";
@@ -89,9 +89,6 @@ export async function removePlayer(shareCode: string, actorId: string, playerId:
   });
 
   // Told only once it has committed.
-  const channel = (await createClient()).channel(`session:${shareCode}`);
-  const send = (event: string, payload: unknown) =>
-    channel.send({ type: "broadcast", event, payload: { type: event, payload } }).then(() => {}, () => {});
-  await send("player:left", { playerId, reason });
-  if (outcome.hostChanged) await send("host:changed", { hostId: outcome.hostChanged });
+  await sendSessionEvent(shareCode, "player:left", { playerId, reason });
+  if (outcome.hostChanged) await sendSessionEvent(shareCode, "host:changed", { hostId: outcome.hostChanged });
 }

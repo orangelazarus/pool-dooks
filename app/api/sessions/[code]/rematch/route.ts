@@ -4,6 +4,7 @@ import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import type { Rematch } from "@/lib/db/schema";
 import { sendPushToUsers } from "@/lib/push/send";
+import { sendSessionEvent } from "@/lib/realtime/server";
 
 /**
  * Opens a "play again" proposal on a completed session. Any player may do this.
@@ -56,14 +57,7 @@ export async function POST(
 
   const proposedByUsername = profile?.username ?? "A player";
 
-  await supabase.channel(`session:${code}`).send({
-    type: "broadcast",
-    event: "rematch:proposed",
-    payload: {
-      type: "rematch:proposed",
-      payload: { proposedBy: user.id, proposedByUsername },
-    },
-  });
+  await sendSessionEvent(code, "rematch:proposed", { proposedBy: user.id, proposedByUsername });
 
   const others = await db
     .select({ playerId: sessionPlayers.playerId })

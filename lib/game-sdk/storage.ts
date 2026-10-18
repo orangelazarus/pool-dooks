@@ -2,8 +2,9 @@
 // through the ContentApi / StateApi objects built in context.ts, which pin
 // every call to one gameType (and, for state, one session). Queries go
 // through executor(), so inside a game action they join its transaction.
-import { and, desc, eq, ilike, lte, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
 import { gameContent, gameState, profiles, sessions } from "@/lib/db";
+import type { Session } from "@/lib/db/schema";
 import { GameError, StateConflictError } from "./errors";
 import { executor } from "./tx";
 import type { ContentListOptions, ContentRecord, Deadline } from "./types";
@@ -12,6 +13,9 @@ import type { ContentListOptions, ContentRecord, Deadline } from "./types";
 // hostile caller can't use game storage as a dumping ground.
 export const MAX_STORED_BYTES = 256 * 1024;
 export const MAX_TITLE_LENGTH = 200;
+// Guest accounts are free, so creating content is capped per author, across
+// every game. The busiest real author has made 38 in a day (chess makes one per game).
+export const MAX_CONTENT_PER_DAY = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function assertSize(value: unknown, what: string, max = MAX_STORED_BYTES) {
@@ -39,10 +43,17 @@ const contentColumns = {
 const selectContent = () =>
   executor().select(contentColumns).from(gameContent).leftJoin(profiles, eq(gameContent.authorId, profiles.id));
 
+/** Any row of this game, private or not. Core only: games get getVisibleContent. */
 export async function getContent<C>(gameType: string, id: string): Promise<ContentRecord<C> | null> {
   if (!UUID.test(id)) return null;
   const [row] = await selectContent().where(and(eq(gameContent.gameType, gameType), eq(gameContent.id, id)));
   return (row as ContentRecord<C> | undefined) ?? null;
+}
+
+/** A row `viewerId` may see: public, or their own. Same rule as listContent. */
+export async function getVisibleContent<C>(gameType: string, id: string, viewerId: string | null): Promise<ContentRecord<C> | null> {
+  const row = await getContent<C>(gameType, id);
+  return row && (row.isPublic || (viewerId !== null && row.authorId === viewerId)) ? row : null;
 }
 
 export async function listContent<C>(
@@ -83,6 +94,11 @@ export async function createContent<C>(
   input: { title: string; data: C; isPublic?: boolean }
 ): Promise<ContentRecord<C>> {
   assertSize(input.data, "This content");
+  const [made] = await executor()
+    .select({ n: count() })
+    .from(gameContent)
+    .where(and(eq(gameContent.authorId, authorId), gte(gameContent.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000))));
+  if (made.n >= MAX_CONTENT_PER_DAY) throw new GameError(429, "You've made a lot today. Try again tomorrow.");
   const [row] = await executor()
     .insert(gameContent)
     .values({ gameType, authorId, title: cleanTitle(input.title), isPublic: input.isPublic ?? true, data: input.data })
@@ -160,6 +176,16 @@ export async function updateState<S>(
     .returning({ data: gameState.data, version: gameState.version });
   if (!row) throw new StateConflictError();
   return row as Stored<S>;
+}
+
+/**
+ * Locks the session's row for the rest of the transaction and returns it as it
+ * is now. Leaving and kicking take the same lock first (lib/sessions/leave.ts),
+ * so an action and a departure can't interleave: whichever waits sees the other's result.
+ */
+export async function lockSession(sessionId: string): Promise<Session | null> {
+  const [row] = await executor().select().from(sessions).where(eq(sessions.id, sessionId)).for("update");
+  return row ?? null;
 }
 
 // ── Deadlines: at most one per session, on its sessions row ────────────────

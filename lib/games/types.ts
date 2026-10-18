@@ -66,9 +66,10 @@ export interface GamePlugin {
   getLobbyMeta?(session: Session): Promise<{ subtitle: string }>;
 
   /**
-   * Returns a human-readable title for a piece of game content.
+   * Returns a human-readable title for a piece of game content that `viewerId`
+   * may use: public, or their own. Throws otherwise, as for content that doesn't exist.
    */
-  getContentMeta(gameContentId: string): Promise<{ title: string }>;
+  getContentMeta(gameContentId: string, viewerId: string | null): Promise<{ title: string }>;
 
   /**
    * Runs the game's onPlayerLeft, inside the caller's transaction, after the

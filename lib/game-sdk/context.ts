@@ -6,6 +6,7 @@ import { db, sessions, sessionPlayers, profiles, answers } from "@/lib/db";
 import type { Session } from "@/lib/db/schema";
 import { createClient } from "@/lib/supabase/server";
 import { sendPushToUsers } from "@/lib/push/send";
+import { sendSessionEvent } from "@/lib/realtime/server";
 import { GameError } from "./errors";
 import { mutateState } from "./mutate";
 import * as storage from "./storage";
@@ -44,7 +45,7 @@ function contentApi<C>(gameType: string, viewer: Viewer | null): ContentApi<C> {
   };
   return {
     create: (input) => storage.createContent<C>(gameType, requireViewer().id, input),
-    get: (id) => storage.getContent<C>(gameType, id),
+    get: (id) => storage.getVisibleContent<C>(gameType, id, viewer?.id ?? null),
     list: (options) => storage.listContent<C>(gameType, viewer?.id ?? null, options),
     update: (id, patch) => storage.updateContent<C>(gameType, id, requireViewer().id, patch),
     remove: (id) => storage.removeContent(gameType, id, requireViewer().id),
@@ -83,14 +84,18 @@ async function loadPlayers(sessionId: string): Promise<{ players: SessionPlayer[
 
 /**
  * Context for one session. Refuses a session that belongs to a different game,
- * so a game can never be handed another game's session.
+ * so a game can never be handed another game's session. Pass `viewer` when it
+ * is already known, to rebuild the context without asking Supabase again.
  */
-export async function buildSessionContext<C, S>(gameType: string, row: Session): Promise<SessionContext<C, S>> {
+export async function buildSessionContext<C, S>(
+  gameType: string,
+  row: Session,
+  known?: { viewer: Viewer | null }
+): Promise<SessionContext<C, S>> {
   if (row.gameType !== gameType) throw new GameError(404, "Session not found");
 
-  const supabase = await createClient();
   const [viewer, { players, leftPlayers }, content] = await Promise.all([
-    resolveViewer(supabase),
+    known ? known.viewer : createClient().then(resolveViewer),
     loadPlayers(row.id),
     row.gameContentId ? storage.getContent<C>(gameType, row.gameContentId) : null,
   ]);
@@ -121,13 +126,9 @@ export async function buildSessionContext<C, S>(gameType: string, row: Session):
   const isPlayer = !!viewer && players.some((p) => p.id === viewer.id);
   const role: ViewerRole | null = isPlayer ? "player" : row.isPublic ? "observer" : null;
 
-  const channel = () => supabase.channel(`session:${row.shareCode}`);
   // Held until the action's transaction commits, so nobody hears about a
   // change that gets rolled back. Delivery problems never fail the action.
-  const send = (event: string, payload: unknown) =>
-    afterCommit(() =>
-      channel().send({ type: "broadcast", event, payload: { type: event, payload } }).then(() => {}, () => {})
-    );
+  const send = (event: string, payload: unknown) => afterCommit(() => sendSessionEvent(row.shareCode, event, payload));
 
   const announceDeadline = (deadline: Deadline | null) =>
     send("game:deadline", deadline && { at: deadline.at.toISOString(), key: deadline.key });

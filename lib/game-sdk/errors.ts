@@ -15,6 +15,10 @@ export class GameError extends Error {
   }
 }
 
+/** What a GET action gets for trying to change anything. Shared by ./tx and the test harness. */
+export const READ_ONLY_MESSAGE =
+  "GET actions are read-only: they can't change state, broadcast or notify. Use POST for anything that changes the game.";
+
 /** The session's state changed since it was read — another request got there first. */
 export class StateConflictError extends GameError {
   constructor() {

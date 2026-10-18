@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { db, sessions, sessionPlayers, profiles } from "@/lib/db";
 import { eq, count, and } from "drizzle-orm";
-import { createClient as createSupabaseAdmin } from "@/lib/supabase/server";
+import { sendSessionEvent } from "@/lib/realtime/server";
 import { getPlugin } from "@/lib/games/registry";
 import { expireIfStale } from "@/lib/sessions/expiry";
 
@@ -67,20 +67,11 @@ export async function POST(
   if (outcome === "kicked") return NextResponse.json({ error: "The host removed you from this game" }, { status: 403 });
   if (outcome === "rejoined") return NextResponse.json({ ok: true });
 
-  // Broadcast player:joined event via Supabase Realtime
   const profile = await db.select().from(profiles).where(eq(profiles.id, user.id));
-  const admin = await createSupabaseAdmin();
-  await admin.channel(`session:${code}`).send({
-    type: "broadcast",
-    event: "player:joined",
-    payload: {
-      type: "player:joined",
-      payload: {
-        playerId: user.id,
-        username: profile[0]?.username ?? "Unknown",
-        avatarUrl: profile[0]?.avatarUrl,
-      },
-    },
+  await sendSessionEvent(code, "player:joined", {
+    playerId: user.id,
+    username: profile[0]?.username ?? "Unknown",
+    avatarUrl: profile[0]?.avatarUrl,
   });
 
   return NextResponse.json({ ok: true }, { status: 201 });

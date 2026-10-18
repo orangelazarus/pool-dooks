@@ -6,14 +6,16 @@
 // at all, and anything that tells the outside world (realtime, push) is held
 // back until the commit has happened.
 import { AsyncLocalStorage } from "node:async_hooks";
+import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { GameError } from "./errors";
+import { GameError, READ_ONLY_MESSAGE } from "./errors";
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 interface Scope {
   tx: Transaction;
   afterCommit: Array<() => Promise<void>>;
+  readOnly: boolean;
 }
 
 const scope = new AsyncLocalStorage<Scope>();
@@ -28,6 +30,8 @@ export const executor = (): Transaction | typeof db => scope.getStore()?.tx ?? d
  */
 export async function afterCommit(effect: () => Promise<void>): Promise<void> {
   const current = scope.getStore();
+  // Postgres stops a read-only action's writes; this stops the effects that never touch it.
+  if (current?.readOnly) throw new Error(READ_ONLY_MESSAGE);
   if (current) current.afterCommit.push(effect);
   else await effect();
 }
@@ -41,13 +45,17 @@ export async function afterCommit(effect: () => Promise<void>): Promise<void> {
  *   then refuse (chess records a loss on time, then tells the player why
  *   their move wasn't accepted).
  * - Throws anything else → roll everything back, rethrow.
+ *
+ * `readOnly` is for GET actions. A link on another site can make a signed-in
+ * browser send a GET (the cookies are SameSite=Lax), so a GET must never change anything.
  */
-export async function runInTransaction<T>(fn: () => Promise<T>): Promise<T> {
+export async function runInTransaction<T>(fn: () => Promise<T>, { readOnly = false }: { readOnly?: boolean } = {}): Promise<T> {
   const effects: Scope["afterCommit"] = [];
   let reply: GameError | undefined;
 
-  const result = await db.transaction(async (tx) =>
-    scope.run({ tx, afterCommit: effects }, async () => {
+  const result = await db.transaction(async (tx) => {
+    if (readOnly) await tx.execute(sql`SET TRANSACTION READ ONLY`);
+    return scope.run({ tx, afterCommit: effects, readOnly }, async () => {
       try {
         return await fn();
       } catch (err) {
@@ -55,8 +63,8 @@ export async function runInTransaction<T>(fn: () => Promise<T>): Promise<T> {
         reply = err;
         return undefined as T;
       }
-    })
-  );
+    });
+  });
 
   // Committed. Delivery problems must not undo or fail the action.
   for (const effect of effects) await effect().catch(() => {});
