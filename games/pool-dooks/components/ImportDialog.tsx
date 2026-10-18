@@ -152,6 +152,9 @@ export function ImportDialog({ open, onClose, onImport }: ImportDialogProps) {
               onClick={() => imageRef.current?.click()}
             >
               {scanPreview ? (
+                // A blob: URL for a photo still on this device. next/image can't optimize
+                // one, and the user's photos shouldn't go through the image optimizer anyway.
+                // eslint-disable-next-line @next/next/no-img-element
                 <img src={scanPreview} alt="Preview" className="max-h-48 mx-auto rounded object-contain" />
               ) : (
                 <>
