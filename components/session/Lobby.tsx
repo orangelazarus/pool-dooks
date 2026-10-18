@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useSession } from "@/hooks/useSession";
-import { useGameState } from "@/hooks/useGameState";
+import type { Player } from "@/hooks/useGameState";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { Bell, Crown, Eye, Globe, Lock, LogOut, Play, Users, X } from "lucide-react";
 import { toast } from "sonner";
@@ -67,22 +67,38 @@ export function Lobby({
     return () => clearInterval(id);
   }, [expiresAt, router]);
 
-  const { state, handleEvent } = useGameState(
-    initialPlayers.map((p) => ({
-      playerId: p.playerId,
-      username: p.username ?? "Unknown",
-      avatarUrl: p.avatarUrl ?? undefined,
-    }))
-  );
+  // The roster is the server's. Joins and leaves show at once, then ask the
+  // server for the page again; whenever its roster arrives it replaces ours.
+  // That also repairs one missed while the live channel was still joining,
+  // since useSession refreshes the page once it has joined.
+  const serverPlayers: Player[] = initialPlayers.map((p) => ({
+    playerId: p.playerId,
+    username: p.username ?? "Unknown",
+    avatarUrl: p.avatarUrl ?? undefined,
+  }));
+  const serverKey = serverPlayers.map((p) => p.playerId).join(",");
+  const [roster, setRoster] = useState({ key: serverKey, players: serverPlayers });
+  if (roster.key !== serverKey) setRoster({ key: serverKey, players: serverPlayers });
+  const players = roster.players;
 
   useSession(shareCode, (event) => {
-    handleEvent(event);
     if (event.type === "session:started") {
       router.push(`/sessions/${shareCode}/play`);
     }
     if (event.type === "player:left" && event.payload.playerId === currentUserId) {
       if (event.payload.reason === "kicked") toast.error("The host removed you from this game");
       router.push("/home");
+      return;
+    }
+    if (event.type === "player:joined") {
+      const joined = event.payload;
+      setRoster((r) => (r.players.some((p) => p.playerId === joined.playerId) ? r : { ...r, players: [...r.players, joined] }));
+      router.refresh();
+    }
+    if (event.type === "player:left") {
+      const { playerId } = event.payload;
+      setRoster((r) => ({ ...r, players: r.players.filter((p) => p.playerId !== playerId) }));
+      router.refresh();
     }
     // The new host gets the Start button.
     if (event.type === "host:changed") router.refresh();
@@ -157,10 +173,10 @@ export function Lobby({
       <div className="border rounded-lg p-4 mb-6">
         <div className="flex items-center gap-2 mb-4">
           <Users className="h-4 w-4" />
-          <span className="font-medium text-sm">Players ({state.players.length})</span>
+          <span className="font-medium text-sm">Players ({players.length})</span>
         </div>
         <div className="space-y-2">
-          {state.players.map((player) => (
+          {players.map((player) => (
             <div key={player.playerId} className="flex items-center gap-3">
               <Avatar className="h-8 w-8">
                 <AvatarImage src={player.avatarUrl ?? undefined} />
@@ -192,9 +208,9 @@ export function Lobby({
             </div>
           ))}
         </div>
-        {state.players.length < minPlayers && (
+        {players.length < minPlayers && (
           <p className="text-xs text-muted-foreground text-center mt-4">
-            {minPlayers - state.players.length} more player{minPlayers - state.players.length === 1 ? "" : "s"} needed to start
+            {minPlayers - players.length} more player{minPlayers - players.length === 1 ? "" : "s"} needed to start
           </p>
         )}
       </div>
@@ -220,7 +236,7 @@ export function Lobby({
       {isHost && (
         <Button
           onClick={handleStart}
-          disabled={starting || state.players.length < minPlayers}
+          disabled={starting || players.length < minPlayers}
           size="lg"
           className="w-full gap-2"
         >
@@ -235,7 +251,7 @@ export function Lobby({
         </p>
       )}
 
-      {!isSpectator && state.players.some((p) => p.playerId === currentUserId) && (
+      {!isSpectator && players.some((p) => p.playerId === currentUserId) && (
         <Button
           variant="ghost"
           size="sm"
