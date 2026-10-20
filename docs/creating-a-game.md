@@ -169,6 +169,8 @@ export const plugin = defineGame<HotTakeContent, HotTakeState>({
 | `buildResult(ctx)` | The reveal page renders | The game is over; secrets can come out. |
 | `getLobbyMeta(ctx)` | The lobby renders | Optional one-line subtitle. |
 
+Set `supportsRandomize: true` to give the host a shuffle switch when creating a session; `start` gets the choice as `randomize`, and what it shuffles is up to you. Word the switch with `randomizeText: { label, description }`, e.g. `{ label: "Randomize turn order", description: "Who goes first, and the order after, is shuffled" }`. Without it, the switch keeps Pool Dooks' wording about blanks.
+
 ### Actions
 
 Your game's API is declared, not routed by hand. Before a handler runs, core has already:

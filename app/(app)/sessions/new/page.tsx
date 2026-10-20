@@ -28,7 +28,8 @@ export default function NewSessionPage() {
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
   const [contentTitle, setContentTitle] = useState<string | null>(null);
-  const [supportsRandomize, setSupportsRandomize] = useState(false);
+  // The shuffle switch, worded by the game; null when it doesn't offer one.
+  const [randomizeText, setRandomizeText] = useState<{ label: string; description: string } | null>(null);
   // Offered only by timed games; "off" until the host picks a time.
   const [timer, setTimer] = useState<{ options: number[]; label: string } | null>(null);
   const [timerChoice, setTimerChoice] = useState(OFF);
@@ -47,7 +48,7 @@ export default function NewSessionPage() {
     if (gameType && gameContentId) {
       fetch(`/api/game-content/meta?gameType=${encodeURIComponent(gameType)}&gameContentId=${encodeURIComponent(gameContentId)}`)
         .then((r) => r.json())
-        .then((d) => { setContentTitle(d.title); setSupportsRandomize(d.supportsRandomize ?? false); setTimer(d.timer ?? null); })
+        .then((d) => { setContentTitle(d.title); setRandomizeText(d.randomize ?? null); setTimer(d.timer ?? null); })
         .catch(() => {});
     }
   }, [gameType, gameContentId]);
@@ -119,16 +120,14 @@ export default function NewSessionPage() {
                 </p>
               </div>
             )}
-            {supportsRandomize && (
+            {randomizeText && (
               <div className="flex items-center justify-between">
                 <div>
                   <Label htmlFor="randomize" className="cursor-pointer flex items-center gap-2">
                     <Shuffle className="h-4 w-4" />
-                    Randomize blank order
+                    {randomizeText.label}
                   </Label>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Players fill blanks in a shuffled order
-                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{randomizeText.description}</p>
                 </div>
                 <Switch id="randomize" checked={randomize} onCheckedChange={setRandomize} />
               </div>

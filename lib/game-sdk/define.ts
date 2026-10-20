@@ -15,6 +15,8 @@ import type { ContentAction, GameDefinition, SessionAction } from "./types";
 
 const GAME_TYPE = /^[a-z][a-z0-9_]*$/;
 const SHARE_CODE = /^[A-Z0-9]{6}$/;
+// Written for Pool Dooks, the first game to shuffle; others word their own.
+const DEFAULT_RANDOMIZE_TEXT = { label: "Randomize blank order", description: "Players fill blanks in a shuffled order" };
 
 const fail = (status: number, error: string, extra?: Record<string, unknown>) =>
   NextResponse.json({ error, ...extra }, { status });
@@ -177,7 +179,7 @@ export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>):
     browsePath: `/games/${def.gameType}`,
     minPlayers: def.minPlayers,
     maxPlayers: def.maxPlayers,
-    supportsRandomize: def.supportsRandomize ?? false,
+    randomize: def.supportsRandomize ? (def.randomizeText ?? DEFAULT_RANDOMIZE_TEXT) : null,
     timer: def.timer ? { options: [...def.timer.options], label: def.timer.label ?? "Timer" } : null,
     usesDeadlines: !!def.onDeadline,
     supportsLeaving: !!def.onPlayerLeft,
