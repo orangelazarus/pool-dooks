@@ -22,7 +22,8 @@ export interface GamePlugin {
   browsePath: string;
   minPlayers: number;
   maxPlayers: number;
-  supportsRandomize: boolean;
+  /** The setup page's shuffle switch and its wording; null if the game doesn't offer one. */
+  randomize: { label: string; description: string } | null;
   /** Timer choices to offer the host at session creation; null if the game isn't timed. */
   timer: { options: number[]; label: string } | null;
   /** The game sets deadlines (it defines onDeadline), so rendering it may move the session on. */

@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     const plugin = getPlugin(gameType);
     const { data: { user } } = await (await createClient()).auth.getUser();
     const meta = await plugin.getContentMeta(gameContentId, user?.id ?? null);
-    return NextResponse.json({ ...meta, supportsRandomize: plugin.supportsRandomize, timer: plugin.timer });
+    return NextResponse.json({ ...meta, randomize: plugin.randomize, timer: plugin.timer });
   } catch {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

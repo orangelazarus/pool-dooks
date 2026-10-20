@@ -211,7 +211,13 @@ export interface GameDefinition<C = unknown, S = unknown> {
   description: string;
   minPlayers: number;
   maxPlayers: number;
+  /** Offer the host a switch that shuffles the order; the game applies it in start() (`randomize`). */
   supportsRandomize?: boolean;
+  /**
+   * How the setup page words that switch, for what this game shuffles.
+   * Default: "Randomize blank order" / "Players fill blanks in a shuffled order".
+   */
+  randomizeText?: { label: string; description: string };
 
   /**
    * Offer the host a timer when creating a session. The choice (or null, for
