@@ -99,6 +99,7 @@ export const plugin = defineGame<DiscusContent, DiscusState>({
   minPlayers: 2,
   maxPlayers: 6,
   supportsRandomize: true,
+  randomizeText: { label: "Randomize turn order", description: "Who spins first, and the order after, is shuffled" },
   timer: { options: [15, 30, 60], label: "Time per turn" },
 
   async getLobbyMeta(ctx) {
