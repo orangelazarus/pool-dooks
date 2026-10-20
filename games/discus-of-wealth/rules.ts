@@ -100,7 +100,8 @@ export function spin(state: DiscusState, playerId: string, wedge: number): Discu
   if (remaining(state, CONSONANTS).length === 0) throw new GameError(400, "Only vowels remain — buy one or solve");
 
   const landed = wedgesFor(state.round, state.puzzleIds.length)[wedge];
-  const spun = { ...state, spins: state.spins + 1 };
+  // Every spin records where it landed — Bankrupt and Lose a Turn too — so the discus shows it.
+  const spun = { ...state, spins: state.spins + 1, wedge };
   if (landed.kind === "bankrupt") {
     return passTurn(
       { ...spun, roundMoney: { ...state.roundMoney, [playerId]: 0 } },
@@ -108,7 +109,7 @@ export function spin(state: DiscusState, playerId: string, wedge: number): Discu
     );
   }
   if (landed.kind === "lose") return passTurn(spun, { kind: "lose", playerId, wedge });
-  return { ...spun, phase: "call", wedge, last: { kind: "spin", playerId, wedge } };
+  return { ...spun, phase: "call", last: { kind: "spin", playerId, wedge } };
 }
 
 export function callConsonant(state: DiscusState, playerId: string, letter: string): DiscusState {
