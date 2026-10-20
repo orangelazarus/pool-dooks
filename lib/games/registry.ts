@@ -3,6 +3,7 @@
 import type { GamePlugin } from "./types";
 import { plugin as plugin_acrophobia } from "../../games/acrophobia/plugin";
 import { plugin as plugin_chess } from "../../games/chess/plugin";
+import { plugin as plugin_discus_of_wealth } from "../../games/discus-of-wealth/plugin";
 import { plugin as plugin_farkle } from "../../games/farkle/plugin";
 import { plugin as plugin_guess_the_number } from "../../games/guess-the-number/plugin";
 import { plugin as plugin_pool_dooks } from "../../games/pool-dooks/plugin";
@@ -11,6 +12,7 @@ import { plugin as plugin_subterfuge } from "../../games/subterfuge/plugin";
 const registry = new Map<string, GamePlugin>([
   [plugin_acrophobia.gameType, plugin_acrophobia],
   [plugin_chess.gameType, plugin_chess],
+  [plugin_discus_of_wealth.gameType, plugin_discus_of_wealth],
   [plugin_farkle.gameType, plugin_farkle],
   [plugin_guess_the_number.gameType, plugin_guess_the_number],
   [plugin_pool_dooks.gameType, plugin_pool_dooks],
