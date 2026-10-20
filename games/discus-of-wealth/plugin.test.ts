@@ -46,12 +46,14 @@ describe("Discus of Wealth", () => {
     landOn(BANKRUPT);
     await t.as("p1").act("spin");
     expect(t.state()!.roundMoney.p1).toBe(0);
+    expect((await view(t, "p2")).wedge).toBe(BANKRUPT); // the discus shows where it landed
     expect(t.state()!.turnId).toBe("p2");
     await expect(t.as("p1").act("spin")).rejects.toThrow("not your turn");
 
     landOn(LOSE);
     await t.as("p2").act("spin");
     expect(t.state()!.turnId).toBe("p3");
+    expect(t.state()!.wedge).toBe(LOSE);
 
     landOn(CASH_600);
     await t.as("p3").act("spin");
