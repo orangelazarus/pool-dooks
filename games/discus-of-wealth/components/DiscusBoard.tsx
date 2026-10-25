@@ -58,11 +58,20 @@ export function DiscusBoard({ shareCode, currentUserId, hostId, players, deadlin
         </div>
       </div>
 
-      <PuzzleBoard board={view.board} category={view.category} />
+      {/* On a phone the letter pad is a long way down: keep the board and what just happened pinned under the nav. */}
+      <div className="space-y-5 max-sm:space-y-2 max-sm:sticky max-sm:top-14 max-sm:z-40 max-sm:-mx-2 max-sm:px-2 max-sm:py-2 max-sm:bg-background max-sm:border-b max-sm:shadow-sm">
+        <PuzzleBoard board={view.board} category={view.category} />
 
-      <p className="text-center text-sm min-h-5" aria-live="polite">
-        {spinning ? "Spinning…" : describe(view, name)}
-      </p>
+        <p className="text-center text-sm min-h-5" aria-live="polite">
+          {spinning ? "Spinning…" : describe(view, name)}
+          {/* The header's countdown has scrolled away by now. */}
+          {seconds !== null && (
+            <span className={cn("sm:hidden ml-2 tabular-nums text-muted-foreground", seconds <= 5 && "text-destructive font-semibold")}>
+              {seconds}s
+            </span>
+          )}
+        </p>
+      </div>
 
       {!inBonus && (
         <Discus wedges={view.wedges} landed={view.wedge} spins={view.spins} />
