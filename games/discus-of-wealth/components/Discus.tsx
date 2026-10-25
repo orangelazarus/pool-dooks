@@ -25,6 +25,8 @@ const COLORS = ["#e4572e", "#f3a712", "#29bf12", "#2aa7de", "#a24cc2", "#ef476f"
 const TOP_COLOR = "#d4af37";
 const RADIUS = 96;
 const PEG_RADIUS = 93;
+/** Where the flapper sits, clockwise from the top: at the bottom, as on the show. */
+const POINTER = 180;
 
 /** A point `r` out from the centre, `deg` clockwise from the top. */
 const at = (deg: number, r: number) => {
@@ -60,7 +62,7 @@ function ending(spins: number, slice: number): { rest: number; held: number | nu
 }
 
 /**
- * The discus, turned so the wedge the last spin landed on sits under the
+ * The discus, turned so the wedge the last spin landed on sits at the
  * flapper. `spins` counts every spin, so each one animates — even one that
  * lands where the last did. The server chose the wedge; this only shows it.
  */
@@ -75,17 +77,17 @@ export function Discus({ wedges, landed, spins }: { wedges: Wedge[]; landed: num
 
   // Before the browser paints, so the discus never flashes unturned.
   useLayoutEffect(() => {
-    const restAt = (offset: number) => -(landed ?? 0) * slice + offset;
+    const restAt = (offset: number) => POINTER - (landed ?? 0) * slice + offset;
     const { rest, held } = ending(spins, slice);
     const bend = { now: 0, speed: 0 };
 
     const paint = (a: number, dt: number) => {
       // At speed, pegs pass between frames: flick the flapper for each one that did.
-      const crossed = angle.current !== null && Math.floor((a - slice / 2) / slice) !== Math.floor((angle.current - slice / 2) / slice);
+      const crossed = angle.current !== null && Math.floor((a - POINTER - slice / 2) / slice) !== Math.floor((angle.current - POINTER - slice / 2) / slice);
       angle.current = a;
       if (disc.current) disc.current.style.transform = `rotate(${a}deg)`;
-      // The peg nearest the flapper on the side it comes from (turning clockwise, the left).
-      const peg = mod(a - slice / 2, slice) - slice;
+      // The peg nearest the flapper on the side it comes from (turning clockwise, at the bottom, the right).
+      const peg = mod(a - POINTER - slice / 2, slice) - slice;
       if (peg >= -CONTACT) {
         bend.now = -MAX_BEND * (1 + peg / CONTACT);
         bend.speed = 0;
@@ -135,10 +137,10 @@ export function Discus({ wedges, landed, spins }: { wedges: Wedge[]; landed: num
 
   return (
     <div className="relative mx-auto w-full max-w-[18rem] aspect-square">
-      {/* The flapper, hinged at the top */}
+      {/* The flapper, hinged at the bottom */}
       <div
         ref={flapper}
-        className="absolute left-1/2 -top-1 z-10 w-0 h-0 border-x-[7px] border-x-transparent border-t-[22px] border-t-dooks origin-top drop-shadow"
+        className="absolute left-1/2 -bottom-1 z-10 w-0 h-0 border-x-[7px] border-x-transparent border-b-[22px] border-b-dooks origin-bottom drop-shadow"
         style={{ transform: "translateX(-50%)" }}
       />
       <svg ref={disc} viewBox="-100 -100 200 200" className="w-full h-full drop-shadow-md" role="img" aria-label="The discus">
