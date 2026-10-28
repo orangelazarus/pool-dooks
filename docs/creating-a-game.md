@@ -427,6 +427,8 @@ export default function BrowsePage() {
 
 Send the host to `/sessions/new?gameType=<gameType>&gameContentId=<id>`; core takes it from there (public/private, lobby, share code).
 
+Below your page, core lists the game's finished games: the viewer's own and public ones, each with **See result** and **Play again**. Play again starts a new game with the same content, timer and turn order. You don't need to list played games yourself.
+
 A game can also export `CreatePage` (`/games/<gameType>/create`) and `LibraryPage` (`/games/<gameType>/library`).
 
 ---
