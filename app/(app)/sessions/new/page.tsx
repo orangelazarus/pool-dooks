@@ -23,7 +23,9 @@ export default function NewSessionPage() {
   const gameType = searchParams.get("gameType");
   const gameContentId = searchParams.get("gameContentId");
   const [joinCode, setJoinCode] = useState("");
-  const [randomize, setRandomize] = useState(false);
+  // "Play again" from a finished game carries its timer and turn order over.
+  const [randomize, setRandomize] = useState(searchParams.get("randomize") === "1");
+  const timerParam = searchParams.get("timer");
   const [isPublic, setIsPublic] = useState(false);
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
@@ -48,10 +50,15 @@ export default function NewSessionPage() {
     if (gameType && gameContentId) {
       fetch(`/api/game-content/meta?gameType=${encodeURIComponent(gameType)}&gameContentId=${encodeURIComponent(gameContentId)}`)
         .then((r) => r.json())
-        .then((d) => { setContentTitle(d.title); setRandomizeText(d.randomize ?? null); setTimer(d.timer ?? null); })
+        .then((d) => {
+          setContentTitle(d.title);
+          setRandomizeText(d.randomize ?? null);
+          setTimer(d.timer ?? null);
+          if (timerParam && d.timer?.options.includes(Number(timerParam))) setTimerChoice(timerParam);
+        })
         .catch(() => {});
     }
-  }, [gameType, gameContentId]);
+  }, [gameType, gameContentId, timerParam]);
 
   const handleCreate = async () => {
     if (!gameType || !gameContentId) { toast.error("No game selected"); return; }
