@@ -212,6 +212,7 @@ One subtlety: a `GameError` is a reply, not a failure. Writes made before throwi
 | `ctx.broadcast(name, data)` | Realtime message to everyone with the session open. The channel is private (players, plus anyone for a public game) and only the server can send on it, so browsers can trust it — but every listener sees `data`. |
 | `ctx.notify(to, { title, body })` | Push to this session's players; `"others"` is everyone but the caller. Core sets the link. |
 | `ctx.answers()` | Shared turn engine only: answers given so far |
+| `ctx.ai` | Content actions only: `run(use, request)` for a use declared in `ai`. See [Using AI](#using-ai) |
 
 **Always pass `expectedVersion` from the state you read.** If another request changed the state in between, the update is refused with a 409 instead of silently overwriting — this is what stops a double-tapped button applying twice.
 
@@ -492,6 +493,60 @@ const { seconds } = useDeadline("my_game", shareCode, deadline);
 
 ---
 
+## Using AI
+
+AI costs money, so games never call a model themselves: no AI SDK, no API key, no `fetch` to a model. A game declares each way it uses AI, and core runs and meters every call. Lint enforces this.
+
+**Declare each use** in `defineGame`. Core checks the declaration when the game loads and refuses anything over its ceilings:
+
+```ts
+const Title = z.object({ title: z.string().max(80) });
+
+defineGame({
+  ai: {
+    suggestTitle: {
+      tier: "fast",          // "fast" for short text, "smart" for images and harder text; core picks the model
+      maxInputChars: 500,    // at most 20,000
+      maxOutputTokens: 200,  // at most 4096
+      images: false,         // true accepts one image per call
+      output: Title,         // a zod object: the reply's shape
+      perUserPerDay: 10,     // at most 20
+    },
+  },
+  contentActions: {
+    suggestTitle: {
+      auth: "account",
+      input: z.object({ theme: z.string().max(200) }),
+      handler: async (ctx, { theme }) =>
+        ctx.ai.run<z.infer<typeof Title>>("suggestTitle", { system: TITLE_PROMPT, input: theme }),
+    },
+  },
+});
+```
+
+**What core guarantees, whatever the game does:**
+
+- **Only signed-up accounts.** Guests and logged-out visitors get a 403 or 401.
+- **Structured replies only.** The model has to fill in `output`, and the game gets the parsed object. Make it exactly what your feature needs, with `.max()` on strings. Then even a player who talks the model into something else gets back only a title-shaped object, so the feature can't be used as a free chatbot.
+- **Your instructions stay yours.** Write `system` in game code. Pass player text only as `input`.
+- **Daily limits** (`lib/ai/limits.ts`):
+  - your `perUserPerDay`
+  - 20 calls per account across all games, and 3 for an account under a day old
+  - 40 calls per network
+  - $2 a day per game, and $5 for the whole site
+  - one call at a time per person
+
+  Over a limit, `run` throws a `GameError` with a message players can read (429 or 503), and nothing is sent to the model.
+- **A ledger.** Every call and refusal goes into `ai_usage`, and `node scripts/ai-usage.mjs` summarises it. A row in `ai_blocks` (`all`, `game:<gameType>` or `user:<id>`) switches AI off with no deploy.
+
+`ctx.ai` exists only in content actions. Session actions hold the session locked, and a model call takes seconds.
+
+**In the browser,** `aiStatus(gameType)` from `@/lib/game-sdk/client` returns `{ available, remaining }`. Hide AI controls when `available` is false: there's no key on the server, AI is switched off, or the viewer is a guest. Use `remaining[use]` to show what's left today.
+
+**In tests,** `createTestContent(plugin, { ai: { suggestTitle: [{ title: "Soup Day" }] } })` runs content actions with scripted replies, under the same declared limits and output check. `t.act(name, input)` calls an action, and `t.aiCalls` lists what was sent. Tests never reach a model.
+
+---
+
 ## Testing
 
 `@/lib/game-sdk/testing` runs a game in memory: no browser, no HTTP, and no database (the dev database is production, so this matters). Actions pass through the same access and input checks as the real route, and the same transaction rules — a crash rolls the action back, a `GameError` keeps what was written before it, and broadcasts and pushes are recorded only when an action commits.
@@ -537,6 +592,7 @@ Test files are `*.test.ts` next to the code, and `npm test` runs them; CI does t
 - [ ] `npm run lint` is clean — no restricted imports
 - [ ] `npm test` passes, with tests for your game's action flow
 - [ ] Every action has the tightest `auth` / `access` that works, and an `input` schema
+- [ ] AI goes through declared `ai` uses with the smallest `output`, input and per-day limits that work
 - [ ] Nothing secret in `buildPlayProps`, in a `"viewer"` action, or in a broadcast — spectators receive all three
 - [ ] Every `state.update` passes the `expectedVersion` it read
 - [ ] The play screen works for a spectator (`currentUserId === ""`)

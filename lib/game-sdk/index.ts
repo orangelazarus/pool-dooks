@@ -6,6 +6,10 @@ export { defineGame } from "./define";
 export { GameError, StateConflictError } from "./errors";
 export { shuffle, pickOne, pickSome } from "./shared";
 export type {
+  AiApi,
+  AiPart,
+  AiRequest,
+  AiUse,
   ContentAction,
   ContentApi,
   ContentContext,

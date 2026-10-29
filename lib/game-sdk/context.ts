@@ -7,11 +7,14 @@ import type { Session } from "@/lib/db/schema";
 import { createClient } from "@/lib/supabase/server";
 import { sendPushToUsers } from "@/lib/push/send";
 import { sendSessionEvent } from "@/lib/realtime/server";
+import { aiConfigured, runAi, type AiCaller } from "@/lib/ai/service";
 import { GameError } from "./errors";
 import { mutateState } from "./mutate";
 import * as storage from "./storage";
 import { afterCommit, executor } from "./tx";
 import type {
+  AiApi,
+  AiUse,
   ContentApi,
   ContentContext,
   Deadline,
@@ -32,10 +35,24 @@ const MAX_PUSH_BODY = 200;
 const MAX_DEADLINE_KEY = 64;
 
 export async function resolveViewer(supabase: SupabaseServerClient): Promise<Viewer | null> {
+  return (await resolveAccount(supabase)).viewer;
+}
+
+/**
+ * The viewer, and when they became a signed-up account: when they confirmed
+ * an email, which for a guest who signed up is later than when they arrived.
+ * Kept out of Viewer, so games don't see it; AI limits use it.
+ */
+async function resolveAccount(supabase: SupabaseServerClient): Promise<{ viewer: Viewer | null; accountSince: Date | null }> {
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (!user) return { viewer: null, accountSince: null };
   const [profile] = await db.select({ username: profiles.username }).from(profiles).where(eq(profiles.id, user.id));
-  return { id: user.id, username: profile?.username ?? "Unknown", isGuest: user.is_anonymous ?? false };
+  const isGuest = user.is_anonymous ?? false;
+  const since = user.email_confirmed_at ?? user.created_at;
+  return {
+    viewer: { id: user.id, username: profile?.username ?? "Unknown", isGuest },
+    accountSince: isGuest || !since ? null : new Date(since),
+  };
 }
 
 function contentApi<C>(gameType: string, viewer: Viewer | null): ContentApi<C> {
@@ -52,9 +69,32 @@ function contentApi<C>(gameType: string, viewer: Viewer | null): ContentApi<C> {
   };
 }
 
-export async function buildContentContext<C>(gameType: string): Promise<ContentContext<C>> {
-  const viewer = await resolveViewer(await createClient());
-  return { gameType, viewer, content: contentApi<C>(gameType, viewer) };
+/** The game's declared AI uses, metered by lib/ai/service. */
+function aiApi(gameType: string, uses: Record<string, AiUse>, caller: AiCaller): AiApi {
+  return {
+    available: aiConfigured() && Object.keys(uses).length > 0,
+    run: (use, request) =>
+      runAi(gameType, use, Object.hasOwn(uses, use) ? uses[use] : undefined, request, caller) as Promise<never>,
+  };
+}
+
+export async function buildContentContext<C>(
+  gameType: string,
+  options: { ai?: Record<string, AiUse>; ip: string }
+): Promise<ContentContext<C>> {
+  const { viewer, accountSince } = await resolveAccount(await createClient());
+  return {
+    gameType,
+    viewer,
+    content: contentApi<C>(gameType, viewer),
+    ai: aiApi(gameType, options.ai ?? {}, { viewer, accountSince, ip: options.ip }),
+  };
+}
+
+/** Builds what ctx.ai needs to know about the caller, for core's own AI routes. */
+export async function resolveAiCaller(ip: string): Promise<AiCaller> {
+  const { viewer, accountSince } = await resolveAccount(await createClient());
+  return { viewer, accountSince, ip };
 }
 
 /** The roster, and who has left it. */

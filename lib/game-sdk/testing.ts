@@ -11,10 +11,13 @@
 //   expect(t.state()).toMatchObject({ ... });
 //
 // Only for *.test.ts files; never import it from game code that ships.
-import { checkSessionAccess, parseInput } from "./checks";
+import { checkAiRequest } from "@/lib/ai/limits";
+import { checkContentAuth, checkSessionAccess, parseInput } from "./checks";
 import { GameError, READ_ONLY_MESSAGE, StateConflictError } from "./errors";
 import { mutateState } from "./mutate";
 import type {
+  AiApi,
+  AiRequest,
   ContentApi,
   ContentRecord,
   Deadline,
@@ -435,3 +438,102 @@ export function createTestSession<C, S>(game: Game<C, S>, options: TestSessionOp
 }
 
 export type TestSession = ReturnType<typeof createTestSession<unknown, unknown>>;
+
+export interface TestContentOptions {
+  /** Who calls the actions. Default a signed-up account "u1"; null for logged out. */
+  viewer?: { id: string; isGuest?: boolean } | null;
+  /**
+   * Scripted AI replies, by use name, taken in order. Each must fit the use's
+   * declared `output`, as a real reply must; an Error is thrown as the call's failure.
+   */
+  ai?: Record<string, unknown[]>;
+}
+
+export interface RecordedAiCall {
+  use: string;
+  request: AiRequest;
+}
+
+/**
+ * Runs a game's content actions in memory, with a fake ctx.ai that applies the
+ * same declared limits and output checks as core, minus the daily budgets.
+ *
+ *   const t = createTestContent(plugin, { ai: { generate: [{ title: "…", … }] } });
+ *   const story = await t.act("generate", { theme: "food" });
+ *   expect(t.aiCalls[0].request.input).toContain("food");
+ */
+export function createTestContent<C>(game: Game<C, unknown>, options: TestContentOptions = {}) {
+  const def: GameDefinition<C, unknown> = "definition" in game ? game.definition : game;
+  const who = options.viewer === undefined ? { id: "u1" } : options.viewer;
+  const viewer: Viewer | null = who && { id: who.id, username: who.id, isGuest: who.isGuest ?? false };
+  const rows: ContentRecord<C>[] = [];
+  const replies = Object.fromEntries(Object.entries(options.ai ?? {}).map(([k, v]) => [k, [...v]]));
+  const aiCalls: RecordedAiCall[] = [];
+  let nextId = 1;
+
+  const mine = (id: string) => {
+    const row = rows.find((r) => r.id === id);
+    if (!row || row.authorId !== viewer?.id) throw new GameError(404, "Not found");
+    return row;
+  };
+  const content: ContentApi<C> = {
+    async create({ title, data, isPublic = true }) {
+      if (!viewer) throw new GameError(401, "Unauthorized");
+      const row = { id: `content-${nextId++}`, authorId: viewer.id, authorName: viewer.username, title, isPublic, data: clone(data), createdAt: new Date() };
+      rows.push(row);
+      return clone(row);
+    },
+    async get(id) {
+      const row = rows.find((r) => r.id === id && (r.isPublic || r.authorId === viewer?.id));
+      return row ? clone(row) : null;
+    },
+    async list(opts = {}) {
+      return clone(rows.filter((r) => (opts.mine ? r.authorId === viewer?.id : r.isPublic || r.authorId === viewer?.id)));
+    },
+    async update(id, patch) {
+      Object.assign(mine(id), clone(patch));
+      return clone(mine(id));
+    },
+    async remove(id) {
+      rows.splice(rows.indexOf(mine(id)), 1);
+    },
+  };
+
+  const uses = def.ai ?? {};
+  const ai: AiApi = {
+    available: Object.keys(uses).length > 0,
+    async run(name, request) {
+      const use = Object.hasOwn(uses, name) ? uses[name] : undefined;
+      if (!use) throw new Error(`${def.gameType}: ctx.ai.run("${name}") — no such use in defineGame({ ai })`);
+      if (!viewer) throw new GameError(401, "Unauthorized");
+      if (viewer.isGuest) throw new GameError(403, "Create an account to use AI features");
+      const invalid = checkAiRequest(use, request);
+      if (invalid) throw new GameError(400, invalid);
+      aiCalls.push({ use: name, request: clone(request) });
+      const queue = replies[name];
+      if (!queue?.length) throw new Error(`No scripted AI reply left for "${name}"`);
+      const reply = queue.shift();
+      if (reply instanceof Error) throw reply;
+      const parsed = use.output.safeParse(reply);
+      if (!parsed.success) throw new Error(`Scripted reply for "${name}" doesn't fit its output schema: ${parsed.error.message}`);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return parsed.data as any;
+    },
+  };
+
+  return {
+    /** Content rows created so far. */
+    rows,
+    aiCalls,
+    /** Calls a content action the way its route would: auth and input checks, then the handler. */
+    async act<T = unknown>(name: string, input?: unknown): Promise<T> {
+      const action = Object.hasOwn(def.contentActions ?? {}, name) ? def.contentActions![name] : undefined;
+      if (!action) throw new Error(`${def.gameType} has no content action "${name}"`);
+      const refused = checkContentAuth(action, viewer);
+      if (refused) throw new GameError(refused.status, refused.error, refused.extra);
+      const parsed = parseInput(action, input);
+      if (!parsed.ok) throw new GameError(parsed.refusal.status, parsed.refusal.error, parsed.refusal.extra);
+      return (await action.handler({ gameType: def.gameType, viewer, content, ai }, parsed.value)) as T;
+    },
+  };
+}
