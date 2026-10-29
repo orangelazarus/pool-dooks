@@ -81,8 +81,28 @@ export async function listContent<C>(
   }
 
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
-  const rows = await selectContent()
+  if (options.mine) {
+    const rows = await selectContent()
+      .where(and(...conditions))
+      .orderBy(desc(gameContent.createdAt))
+      .limit(limit);
+    return rows as ContentRecord<C>[];
+  }
+
+  // Shared lists show each setup once: rows with the same title and data are
+  // copies (most games save one per session), so only the newest is listed.
+  // "mine" lists keep every copy, so authors can still find and delete them.
+  const newest = executor()
+    .select({
+      id: gameContent.id,
+      rank: sql<number>`row_number() over (partition by ${gameContent.title}, ${gameContent.data} order by ${gameContent.createdAt} desc)`.as("rank"),
+    })
+    .from(gameContent)
     .where(and(...conditions))
+    .as("newest");
+  const rows = await selectContent()
+    .innerJoin(newest, eq(newest.id, gameContent.id))
+    .where(eq(newest.rank, 1))
     .orderBy(desc(gameContent.createdAt))
     .limit(limit);
   return rows as ContentRecord<C>[];

@@ -61,7 +61,10 @@ export interface GivenAnswer {
 // ── The APIs a handler is given ─────────────────────────────────────────────
 
 export interface ContentListOptions {
-  /** Only the viewer's own content (empty when logged out). Otherwise: public rows plus the viewer's own. */
+  /**
+   * Only the viewer's own content (empty when logged out), every row. Otherwise: public rows plus the
+   * viewer's own, with exact copies (same title and data) listed once, newest first.
+   */
   mine?: boolean;
   /** Case-insensitive match on the title. */
   search?: string;
