@@ -34,6 +34,9 @@ deploy script's own command line and kills it mid-run. Keep the two newest
 
 The server's `.env` must have `SUPABASE_SERVICE_ROLE_KEY`: the server sends every
 live update with it (`lib/realtime/server.ts`), and without it nothing updates live.
+`ANTHROPIC_API_KEY` lives only in the server's `.env.local` (which overrides `.env`);
+each deploy carries both files forward. To check a key without spending anything,
+`GET https://api.anthropic.com/v1/models` with it should return 200.
 
 On the box: `ufw` admits only 22/tcp, 80/tcp, 443/tcp and 443/udp (Caddy's HTTP/3),
 so Next's :3000 is reachable only through Caddy. Open a port with `ufw allow`
@@ -51,7 +54,9 @@ lobby calls back to `NEXT_PUBLIC_APP_URL`). Each test browser is a new guest, an
 Supabase allows about **30 guest sign-ups an hour per IP**. When it runs out,
 guest pages just stall, which looks like an app bug; look for a 429 from
 `/auth/v1/signup` first. Afterwards, delete the test guests (profiles and auth
-users) and their sessions, and unlist any public test sessions.
+users) and their sessions, and unlist any public test sessions. A test that makes
+AI calls also leaves rows in `ai_usage`, which count toward the site's daily AI
+budget: delete them too.
 
 # Games and core are separate
 
@@ -59,8 +64,9 @@ Games are plugins under `games/<name>/`, built with `defineGame()` from
 `lib/game-sdk`. Two rules, both enforced:
 
 - **Game code imports from core only** `@/lib/game-sdk`, `@/lib/game-sdk/client`,
-  `@/components/ui/*` and `@/lib/utils` — never the database, Supabase or push
-  directly. ESLint (`no-restricted-imports`) fails otherwise.
+  `@/components/ui/*` and `@/lib/utils` — never the database, Supabase, push or a
+  model SDK directly, and it doesn't read `process.env` or call `fetch`. ESLint
+  fails otherwise. AI goes through `ctx.ai`, which core meters (`lib/ai/`).
 - **A PR changes a game or core, not both.** If a game needs something new from
   the SDK, land that as its own core PR first. CI runs
   `scripts/check-pr-boundary.mjs`; only `lib/games/registry.ts` (generated — run

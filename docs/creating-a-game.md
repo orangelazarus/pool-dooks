@@ -16,7 +16,7 @@ Every code block below is a complete file from a working version of this example
    - `@/components/ui/*` and `@/lib/utils`
    - its own npm packages
 
-   Nothing else: no database client, no Supabase, no push sender. ESLint enforces this.
+   Nothing else: no database client, no Supabase, no push sender, no AI SDK. Game code also may not read `process.env` or call `fetch`: configuration and outside services are core's, and AI goes through `ctx.ai` (see [Using AI](#using-ai)). ESLint enforces all of this.
 3. **A game PR does not touch core.** If your game needs something the SDK doesn't offer, add it to the SDK in its own PR first. CI fails a PR that changes a game directory together with core code. The generated `lib/games/registry.ts` and `package.json` / `package-lock.json` are the only files allowed alongside a game.
 
 The SDK is a boundary enforced by lint and review, not a sandbox: games still run in the same server process as core.
@@ -186,7 +186,7 @@ Your game's API is declared, not routed by hand. Before a handler runs, core has
 | `contentActions` | `auth: "public"` anyone · `"user"` signed in, guests included · `"account"` a signed-up account | `/api/games/<gameType>/content/<name>` |
 | `sessionActions` | `access: "player"` this session's players · `"host"` only the session's host · `"viewer"` players, plus spectators of a public game | `/api/games/<gameType>/sessions/<code>/<name>` |
 
-Use `auth: "account"` for anything costly or abusable — a guest account costs nothing to create.
+Use `auth: "account"` for anything costly or abusable — a guest account costs nothing to create. (AI calls are refused to guests by core whatever the action's `auth` says.)
 
 Actions default to `POST`. Set `method: "GET"` for reads; input then comes from the query string, so use `z.coerce` for numbers. Player and host actions require the session to be in progress unless you set `when: "any"`.
 
@@ -203,8 +203,8 @@ One subtlety: a `GameError` is a reply, not a failure. Writes made before throwi
 | | |
 |---|---|
 | `ctx.viewer` | `{ id, username, isGuest }` or `null` |
-| `ctx.content` | `create`, `get`, `list`, `update`, `remove` — this game's rows only. `get` and `list` never return someone else's private content; `update` and `remove` are author-only; `create` allows 100 a day per author. |
-| `ctx.session` | Read-only: `shareCode`, `status`, `hostId`, `isPublic`, `currentPlayerId`, `players`, and `content` (the row being played) |
+| `ctx.content` | `create`, `get`, `list`, `update`, `remove` — this game's rows only. `get` and `list` never return someone else's private content; `update` and `remove` are author-only; `create` allows 100 a day per author. `list` shows exact copies (same title and `data`) once, newest first, except with `mine: true`, which returns every row. |
+| `ctx.session` | Read-only: `shareCode`, `status`, `hostId`, `isPublic`, `currentPlayerId`, `players`, `leftPlayers`, `timerSeconds`, `completedAt`, and `content` (the row being played) |
 | `ctx.role` | `"player"`, `"observer"`, or `null` |
 | `ctx.state` | `get()`, `init(data)`, `update(data, { expectedVersion })`, `mutate(change)` |
 | `ctx.turn.set(playerId)` | Whose turn it is (must be one of this session's players) |
@@ -308,7 +308,7 @@ export function HotTakeBoard({ shareCode, currentUserId, players, statement, vot
 }
 ```
 
-- Core passes `shareCode`, `currentUserId`, `hostId` and `players` to every play component, then spreads in your `buildPlayProps`.
+- Core passes `shareCode`, `currentUserId`, `hostId`, `players` and `deadline` (see [Timed games](#timed-games)) to every play component, then spreads in your `buildPlayProps`.
 - **Spectators get the same component** with `currentUserId` set to `""`. Design the screen so a viewer who isn't a player simply sees a read-only view; core adds the "You're watching" banner.
 - `gameAction` rejects with a `GameActionError` carrying the server's message and status.
 - Start from the server-rendered props and update from `useGameSession` events. Don't keep anything the server didn't send.
@@ -580,6 +580,9 @@ The harness gives you:
 | `t.state()`, `t.status()`, `t.currentPlayerId()` | What's stored now |
 | `t.broadcasts`, `t.notifications` | Everything committed actions sent |
 | `t.setState(data)`, `t.withContext(id, fn)` | Simulate another request's write; run code against a real context |
+| `t.leave(id)`, `t.kick(id)`, `t.clock.advance(ms)`, `t.deadline()` | Players leaving; timed games |
+
+Content actions, including ones that use AI, run through `createTestContent(plugin, { viewer, ai })` instead: `t.act(name, input)` calls an action with the same auth and input checks, against an in-memory content store, and `ai` scripts the model's replies (see [Using AI](#using-ai)).
 
 Test files are `*.test.ts` next to the code, and `npm test` runs them; CI does too. Only test files may import `@/lib/game-sdk/testing`.
 
@@ -605,3 +608,5 @@ Test files are `*.test.ts` next to the code, and `npm test` runs them; CI does t
 - **Updating state without a version.** Read, then `update(..., { expectedVersion })` with the version you read.
 - **Writing, then throwing a `GameError` you meant as a rollback.** A `GameError` keeps earlier writes. Do your checks first, then write.
 - **Reaching into core.** If you want something the SDK doesn't have, that's a core PR — not a deep import.
+- **Calling a model yourself.** Declare the use in `ai` and call `ctx.ai.run`; core holds the key and the budget. Keep `output` as small as the feature needs, so the model can only hand back that.
+- **Letting players write the instructions.** Put your prompt in `system`, in game code, and pass player text only as `input`.
