@@ -73,6 +73,18 @@ export function contentAction<T = unknown>(
   return call<T>(`/api/games/${gameType}/content/${action}`, input, method);
 }
 
+export interface AiStatus {
+  /** The viewer may use this game's AI features at all: a signed-up account, with AI set up and switched on. */
+  available: boolean;
+  /** Calls left today, per use declared in defineGame({ ai }). */
+  remaining: Record<string, number>;
+}
+
+/** Whether to show this game's AI controls, and how many uses are left today. */
+export function aiStatus(gameType: string): Promise<AiStatus> {
+  return call<AiStatus>(`/api/games/${gameType}/ai/status`, undefined, "GET");
+}
+
 /** Shared turn engine: submit the current player's answer for a token. */
 export function submitAnswer(shareCode: string, tokenId: string, value: string) {
   return call<{ ok: true; isComplete: boolean }>(`/api/sessions/${shareCode}/answer`, { tokenId, value }, "POST");

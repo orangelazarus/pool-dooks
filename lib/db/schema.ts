@@ -8,6 +8,7 @@ import {
   jsonb,
   uniqueIndex,
   index,
+  bigint,
 } from "drizzle-orm/pg-core";
 
 // Extended user profiles (mirrors auth.users)
@@ -163,6 +164,37 @@ export const pushSubscriptions = pgTable(
   },
   (t) => [uniqueIndex("unique_user_endpoint").on(t.userId, t.endpoint)]
 );
+
+// Every model call games make through ctx.ai, and every refusal. Core checks
+// its budgets against this ledger. See drizzle/0016_ai_usage.sql.
+export const aiUsage = pgTable(
+  "ai_usage",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    userId: uuid("user_id").references(() => profiles.id, { onDelete: "set null" }),
+    ipHash: text("ip_hash").notNull(),
+    gameType: text("game_type").notNull(),
+    use: text("use").notNull(),
+    model: text("model"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    costMicros: bigint("cost_micros", { mode: "number" }).notNull().default(0),
+    outcome: text("outcome").notNull(),
+  },
+  (t) => [
+    index("idx_ai_usage_created").on(t.createdAt),
+    index("idx_ai_usage_user_created").on(t.userId, t.createdAt),
+    index("idx_ai_usage_ip_created").on(t.ipHash, t.createdAt),
+  ]
+);
+
+// AI off switches: 'all', 'game:<gameType>' or 'user:<profile id>'. A row means off.
+export const aiBlocks = pgTable("ai_blocks", {
+  scope: text("scope").primaryKey(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // TypeScript types derived from schema
 export type Profile = typeof profiles.$inferSelect;

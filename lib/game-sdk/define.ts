@@ -6,7 +6,9 @@ import { eq } from "drizzle-orm";
 import { db, sessions } from "@/lib/db";
 import type { Session } from "@/lib/db/schema";
 import type { GamePlugin } from "@/lib/games/types";
-import { buildContentContext, buildSessionContext } from "./context";
+import { buildContentContext, buildSessionContext, resolveAiCaller } from "./context";
+import { aiStatus } from "@/lib/ai/service";
+import { checkAiUse } from "@/lib/ai/limits";
 import { claimDueDeadline, getDeadline, getVisibleContent, lockSession } from "./storage";
 import { GameError } from "./errors";
 import { checkContentAuth, checkSessionAccess, parseInput, type Refusal } from "./checks";
@@ -17,6 +19,12 @@ const GAME_TYPE = /^[a-z][a-z0-9_]*$/;
 const SHARE_CODE = /^[A-Z0-9]{6}$/;
 // Written for Pool Dooks, the first game to shuffle; others word their own.
 const DEFAULT_RANDOMIZE_TEXT = { label: "Randomize blank order", description: "Players fill blanks in a shuffled order" };
+
+/**
+ * The client's address. Caddy sets X-Forwarded-For itself and drops what the
+ * client sent, so the last entry is the real one. Local dev has none.
+ */
+const clientIp = (req: NextRequest) => req.headers.get("x-forwarded-for")?.split(",").pop()?.trim() || "local";
 
 const fail = (status: number, error: string, extra?: Record<string, unknown>) =>
   NextResponse.json({ error, ...extra }, { status });
@@ -50,7 +58,7 @@ async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path
       const action = Object.hasOwn(def.contentActions ?? {}, a) ? def.contentActions![a] : undefined;
       if (!action || (action.method ?? "POST") !== req.method) return fail(404, "Not found");
 
-      const ctx = await buildContentContext<C>(def.gameType);
+      const ctx = await buildContentContext<C>(def.gameType, { ai: def.ai, ip: clientIp(req) });
       const refused = checkContentAuth(action, ctx.viewer);
       if (refused) return refuse(refused);
 
@@ -61,6 +69,11 @@ async function runAction<C, S>(def: GameDefinition<C, S>, req: NextRequest, path
           ? await runInTransaction(() => action.handler(ctx, input.value), { readOnly: true })
           : await action.handler(ctx, input.value);
       return NextResponse.json(result ?? { ok: true });
+    }
+
+    // /api/games/<gameType>/ai/status: what the viewer's page should offer
+    if (area === "ai" && a === "status" && !b && req.method === "GET") {
+      return NextResponse.json(await aiStatus(def.gameType, def.ai ?? {}, await resolveAiCaller(clientIp(req))));
     }
 
     // /api/games/<gameType>/sessions/<shareCode>/<action>
@@ -161,6 +174,10 @@ export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>):
   }
   for (const name of Object.keys(def.sessionActions ?? {})) {
     if (name.startsWith("_")) throw new Error(`${def.gameType}: session action "${name}" — names starting with "_" are core's`);
+  }
+  for (const [name, use] of Object.entries(def.ai ?? {})) {
+    const problem = checkAiUse(name, use);
+    if (problem) throw new Error(`${def.gameType}: ${problem}`);
   }
   if (def.timer) {
     if (!def.onDeadline) throw new Error(`${def.gameType}: a game with a timer must define onDeadline`);

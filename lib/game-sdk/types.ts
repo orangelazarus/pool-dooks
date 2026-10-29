@@ -130,14 +130,67 @@ export interface PushMessage {
 }
 
 /** Context for anything that happens outside a session: browsing and managing content. */
+// ── AI ──────────────────────────────────────────────────────────────────────
+
+/**
+ * One way a game uses AI, declared in `defineGame({ ai })`. Core enforces all
+ * of it, plus its own daily limits per user, per network, per game and for the
+ * whole site (lib/ai/limits.ts). Only signed-up accounts may call it.
+ */
+export interface AiUse<T = unknown> {
+  /** "fast" for short text work; "smart" for images and harder text. Core picks the model. */
+  tier: "fast" | "smart";
+  /** Characters of text input, across all parts. At most 20,000. */
+  maxInputChars: number;
+  /** At most 4096. */
+  maxOutputTokens: number;
+  /** Accept one image per call. */
+  images?: boolean;
+  /**
+   * The reply's shape: a zod object. The model must fill it in, and the game
+   * gets the parsed object, never free text, so the feature can't double as a
+   * general-purpose chatbot.
+   */
+  output: z.ZodType<T>;
+  /** Calls one person may make to this use per day. At most 20. */
+  perUserPerDay: number;
+}
+
+export type AiPart =
+  | { type: "text"; text: string }
+  | { type: "image"; mediaType: string; data: string /* base64, no data: prefix */ };
+
+export interface AiRequest {
+  /** The game's instructions. Write it in game code; never pass player text here. */
+  system?: string;
+  /** What the player supplied: text, or text and image parts. */
+  input: string | AiPart[];
+}
+
+export interface AiApi {
+  /** False when the server has no AI key or AI is switched off for this game. */
+  available: boolean;
+  /**
+   * Calls a declared use and returns its parsed `output`. Content actions only.
+   * Throws GameError with a message fit for players when a limit is hit (429),
+   * AI is unavailable (503), the model declines (422) or fails (502).
+   */
+  run<T = unknown>(use: string, request: AiRequest): Promise<T>;
+}
+
 export interface ContentContext<C> {
   gameType: string;
   viewer: Viewer | null;
   content: ContentApi<C>;
+  /** The game's declared AI uses. See AiUse. */
+  ai: AiApi;
 }
 
-/** Context for anything that happens inside one session of this game. */
-export interface SessionContext<C, S> extends ContentContext<C> {
+/**
+ * Context for anything that happens inside one session of this game. No `ai`:
+ * session actions hold the session locked, and a model call takes seconds.
+ */
+export interface SessionContext<C, S> extends Omit<ContentContext<C>, "ai"> {
   session: SessionInfo<C>;
   /** The viewer's standing in this session; null if they have none (lifecycle hooks only). */
   role: ViewerRole | null;
@@ -274,6 +327,13 @@ export interface GameDefinition<C = unknown, S = unknown> {
     ctx: SessionContext<C, S>,
     answer: { tokenId: string; value: string; nextTokenId: string | null; nextPlayerId: string | null }
   ): Promise<{ nextTokenLabel?: string; answered?: { label: string; type: string } }>;
+
+  /**
+   * The ways this game uses AI, by name; content actions call them with
+   * ctx.ai.run(name, …). Games never call a model directly.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ai?: Record<string, AiUse<any>>;
 
   /** → /api/games/<gameType>/content/<name> */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
