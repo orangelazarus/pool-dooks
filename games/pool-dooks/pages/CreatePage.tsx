@@ -51,7 +51,15 @@ export default function CreatePage() {
   const [saving, setSaving] = useState(false);
   const [extraWeird, setExtraWeird] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  // The AI tools need ANTHROPIC_API_KEY on the server; hidden until it says yes.
+  const [aiEnabled, setAiEnabled] = useState(false);
   const isEdit = !!editId;
+
+  useEffect(() => {
+    contentAction<{ enabled: boolean }>("pool_dooks", "aiStatus", undefined, "GET")
+      .then((d) => setAiEnabled(d.enabled))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!editId) return;
@@ -183,42 +191,44 @@ export default function CreatePage() {
             </div>
           </div>
 
-          <div className="border rounded-lg p-4 space-y-4">
-            <h3 className="font-medium text-sm flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-violet-500" />
-              AI Generator
-            </h3>
+          {aiEnabled && (
+            <div className="border rounded-lg p-4 space-y-4">
+              <h3 className="font-medium text-sm flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-violet-500" />
+                AI Generator
+              </h3>
 
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="weird" className="cursor-pointer flex items-center gap-1.5">
-                  <Zap className="h-3.5 w-3.5 text-orange-500" />
-                  Extra Weird
-                </Label>
-                <p className="text-xs text-muted-foreground mt-0.5">Absurdist &amp; surreal mode</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="weird" className="cursor-pointer flex items-center gap-1.5">
+                    <Zap className="h-3.5 w-3.5 text-orange-500" />
+                    Extra Weird
+                  </Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">Absurdist &amp; surreal mode</p>
+                </div>
+                <Switch id="weird" checked={extraWeird} onCheckedChange={setExtraWeird} />
               </div>
-              <Switch id="weird" checked={extraWeird} onCheckedChange={setExtraWeird} />
-            </div>
 
-            <Button
-              onClick={handleGenerate}
-              disabled={generating}
-              variant="outline"
-              className="w-full gap-2"
-            >
-              <Sparkles className="h-4 w-4" />
-              {generating ? "Generating..." : "Generate with AI"}
-            </Button>
-            <Button
-              onClick={handleEnhance}
-              disabled={generating}
-              variant="outline"
-              className="w-full gap-2"
-            >
-              <Sparkles className="h-4 w-4 text-violet-500" />
-              {generating ? "Thinking..." : "Add blanks to pasted text"}
-            </Button>
-          </div>
+              <Button
+                onClick={handleGenerate}
+                disabled={generating}
+                variant="outline"
+                className="w-full gap-2"
+              >
+                <Sparkles className="h-4 w-4" />
+                {generating ? "Generating..." : "Generate with AI"}
+              </Button>
+              <Button
+                onClick={handleEnhance}
+                disabled={generating}
+                variant="outline"
+                className="w-full gap-2"
+              >
+                <Sparkles className="h-4 w-4 text-violet-500" />
+                {generating ? "Thinking..." : "Add blanks to pasted text"}
+              </Button>
+            </div>
+          )}
 
           <Button
             variant="outline"
@@ -248,6 +258,7 @@ export default function CreatePage() {
         open={showImport}
         onClose={() => setShowImport(false)}
         onImport={handleImport}
+        aiEnabled={aiEnabled}
       />
     </div>
   );

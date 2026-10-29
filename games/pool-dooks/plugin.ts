@@ -28,7 +28,9 @@ type SerializableDoc = Parameters<typeof serializeEditorContent>[0];
 
 // The AI actions below are declared `auth: "account"`: they call a paid API
 // and aren't rate limited, and a guest account costs nothing to make.
+// They're optional: without ANTHROPIC_API_KEY the create page hides them.
 const anthropic = new Anthropic({ maxRetries: 4 });
+const aiEnabled = () => !!process.env.ANTHROPIC_API_KEY;
 
 const ENHANCE_PROMPT = `You are helping create a Mad Libs-style fill-in-the-blank game. The user has pasted a story or passage. Your job is to pick the best words to replace with blanks — typically 8–15 words that make the story funny when swapped out.
 
@@ -98,6 +100,7 @@ function storyFromModelReply(message: Anthropic.Message) {
 
 /** Runs an AI call, turning a failure into a message worth showing the author. */
 async function withAiErrors<T>(blockedMessage: string, run: () => Promise<T>): Promise<T> {
+  if (!aiEnabled()) throw new GameError(503, "AI features aren't set up on this server");
   try {
     return await run();
   } catch (err) {
@@ -279,6 +282,13 @@ export const plugin = defineGame<PoolDookContent, never>({
           throw new GameError(400, "That doesn't look like a Pool Dooks export");
         }
       },
+    },
+
+    /** Whether the AI actions below can run here. */
+    aiStatus: {
+      method: "GET",
+      auth: "user",
+      handler: async () => ({ enabled: aiEnabled() }),
     },
 
     generate: {
