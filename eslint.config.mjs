@@ -6,7 +6,7 @@ import nextTs from "eslint-config-next/typescript";
 const AI_SDKS = "^(@anthropic-ai/|openai$|@ai-sdk/|ai$|@google/genai|@google/generative-ai|@mistralai/|groq-sdk|cohere-ai|replicate$|ollama$)";
 
 /** What code under games/ may import from core; tests may also use the harness. */
-function gameImportRule(isTest, { allowAiSdk = false } = {}) {
+function gameImportRule(isTest) {
   const allowed = `lib/game-sdk(/client${isTest ? "|/testing" : ""})?$|components/ui/|lib/utils$`;
   return [
     "error",
@@ -28,9 +28,7 @@ function gameImportRule(isTest, { allowAiSdk = false } = {}) {
           regex: "^(drizzle-orm|pg|web-push|@supabase/|next/headers$)",
           message: "Game code must not use the database, auth or push directly — use the context from @/lib/game-sdk.",
         },
-        ...(allowAiSdk
-          ? []
-          : [{ regex: AI_SDKS, message: "Games use AI only through ctx.ai — declare it in defineGame({ ai }). See docs/creating-a-game.md." }]),
+        { regex: AI_SDKS, message: "Games use AI only through ctx.ai — declare it in defineGame({ ai }). See docs/creating-a-game.md." },
       ],
     },
   ];
@@ -51,12 +49,6 @@ const eslintConfig = defineConfig([
       "no-restricted-properties": ["error", { object: "process", property: "env", message: "Games don't read the environment — ask core for what you need through the SDK." }],
       "no-restricted-globals": ["error", { name: "fetch", message: "Games call the server through @/lib/game-sdk/client, and AI through ctx.ai." }],
     },
-  },
-  // Pool Dooks predates ctx.ai and still calls Anthropic itself; this goes when it moves over.
-  {
-    files: ["games/pool-dooks/**/*.{ts,tsx}"],
-    ignores: ["games/**/*.test.ts"],
-    rules: { "no-restricted-imports": gameImportRule(false, { allowAiSdk: true }), "no-restricted-properties": "off" },
   },
   {
     files: ["games/**/*.test.ts"],
