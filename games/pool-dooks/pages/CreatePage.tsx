@@ -18,7 +18,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { THEMES } from "../schema";
 import { toast } from "sonner";
-import { contentAction } from "@/lib/game-sdk/client";
+import { aiStatus, contentAction } from "@/lib/game-sdk/client";
 import { Sparkles, Upload, Save, Zap } from "lucide-react";
 import { ImportDialog } from "../components/ImportDialog";
 
@@ -51,13 +51,13 @@ export default function CreatePage() {
   const [saving, setSaving] = useState(false);
   const [extraWeird, setExtraWeird] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  // The AI tools need ANTHROPIC_API_KEY on the server; hidden until it says yes.
+  // Core says whether this viewer may use AI here: an account, on a server with a key. Hidden until it says yes.
   const [aiEnabled, setAiEnabled] = useState(false);
   const isEdit = !!editId;
 
   useEffect(() => {
-    contentAction<{ enabled: boolean }>("pool_dooks", "aiStatus", undefined, "GET")
-      .then((d) => setAiEnabled(d.enabled))
+    aiStatus("pool_dooks")
+      .then((d) => setAiEnabled(d.available))
       .catch(() => {});
   }, []);
 
