@@ -118,7 +118,7 @@ Pool Dooks supports linked blanks — a single blank that appears multiple times
 
 - Node.js 20+
 - A [Supabase](https://supabase.com) project
-- An [Anthropic](https://console.anthropic.com) API key
+- Optionally, an [Anthropic](https://console.anthropic.com) API key. Pool Dooks uses it to generate stories, add blanks to pasted text and scan printed pages; without it those features are hidden and everything else works.
 
 ### 1. Install dependencies
 
@@ -135,6 +135,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 DATABASE_URL=postgresql://postgres.[ref]:[password]@pooler.supabase.com:6543/postgres
+# Optional: Pool Dooks' AI features (hidden without it)
 ANTHROPIC_API_KEY=sk-ant-...
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=...

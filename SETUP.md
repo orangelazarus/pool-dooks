@@ -19,6 +19,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 DATABASE_URL=postgresql://postgres.[ref]:[password]@aws-0-us-east-1.pooler.supabase.com:6543/postgres
+# Optional: Pool Dooks' AI features (hidden without it)
 ANTHROPIC_API_KEY=sk-ant-...
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
