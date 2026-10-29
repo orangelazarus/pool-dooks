@@ -1,7 +1,7 @@
 import type { z } from "zod";
-import Anthropic from "@anthropic-ai/sdk";
 import { defineGame, GameError, type ContentRecord, type SessionContext } from "@/lib/game-sdk";
 import {
+  AiStorySchema,
   CreateSchema,
   EnhanceSchema,
   GenerateSchema,
@@ -11,12 +11,11 @@ import {
   ScanSchema,
   UpdateSchema,
   type PoolDookContent,
-  type PoolDookToken,
 } from "./schema";
 import { resolveTokenOrder } from "./utils";
 import { serializeEditorContent } from "./editor/serialize";
 import { parsePlainText, parseJsonImport, buildFromBodyText } from "./editor/deserialize";
-import { generatePoolDook } from "./ai/generate";
+import { EXTRA_WEIRD_SYSTEM_PROMPT, NORMAL_SYSTEM_PROMPT, buildUserPrompt } from "./ai/prompts";
 import { GameBoard } from "./components/GameBoard";
 import { RevealDisplay } from "./components/RevealDisplay";
 import BrowsePage from "./pages/BrowsePage";
@@ -26,11 +25,9 @@ import LibraryPage from "./pages/LibraryPage";
 type Ctx = SessionContext<PoolDookContent, never>;
 type SerializableDoc = Parameters<typeof serializeEditorContent>[0];
 
-// The AI actions below are declared `auth: "account"`: they call a paid API
-// and aren't rate limited, and a guest account costs nothing to make.
-// They're optional: without ANTHROPIC_API_KEY the create page hides them.
-const anthropic = new Anthropic({ maxRetries: 4 });
-const aiEnabled = () => !!process.env.ANTHROPIC_API_KEY;
+// The AI actions below go through core's ctx.ai, which meters them: see the
+// `ai` declaration and docs/creating-a-game.md. Without a key on the server
+// core reports AI unavailable and the create page hides them.
 
 const ENHANCE_PROMPT = `You are helping create a Mad Libs-style fill-in-the-blank game. The user has pasted a story or passage. Your job is to pick the best words to replace with blanks — typically 8–15 words that make the story funny when swapped out.
 
@@ -87,27 +84,12 @@ function toCard(row: ContentRecord<PoolDookContent>) {
   };
 }
 
-/** Pulls the JSON object out of a model reply and turns it into editor content. */
-function storyFromModelReply(message: Anthropic.Message) {
-  const content = message.content[0];
-  if (content.type !== "text") throw new Error("Unexpected response type");
-  const jsonMatch = content.text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("No JSON found in response");
-  const result = JSON.parse(jsonMatch[0]) as { title: string; body_text: string; tokens: PoolDookToken[] };
-  const { bodyJson } = buildFromBodyText(result.body_text, result.tokens);
-  return { title: result.title, bodyText: result.body_text, tokens: result.tokens, bodyJson };
-}
+type AiStory = z.infer<typeof AiStorySchema>;
 
-/** Runs an AI call, turning a failure into a message worth showing the author. */
-async function withAiErrors<T>(blockedMessage: string, run: () => Promise<T>): Promise<T> {
-  if (!aiEnabled()) throw new GameError(503, "AI features aren't set up on this server");
-  try {
-    return await run();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isFilter = message.includes("content filtering") || message.includes("content_filter");
-    throw new GameError(500, isFilter ? blockedMessage : message);
-  }
+/** Turns the model's story into editor content. */
+function toDraft(story: AiStory) {
+  const { bodyJson } = buildFromBodyText(story.body_text, story.tokens);
+  return { title: story.title, bodyText: story.body_text, tokens: story.tokens, bodyJson };
 }
 
 const tokensOf = (ctx: Ctx) => ctx.session.content.data.tokens ?? [];
@@ -194,6 +176,13 @@ export const plugin = defineGame<PoolDookContent, never>({
     });
 
     return { title, theme: data.theme, resultText, answersWithMeta, completedAt: ctx.session.completedAt };
+  },
+
+  // Each AI feature, metered by core. The model must answer with a story.
+  ai: {
+    generate: { tier: "fast", maxInputChars: 600, maxOutputTokens: 2048, output: AiStorySchema, perUserPerDay: 10 },
+    enhance: { tier: "smart", maxInputChars: 5100, maxOutputTokens: 2048, output: AiStorySchema, perUserPerDay: 10 },
+    scan: { tier: "smart", maxInputChars: 100, maxOutputTokens: 4096, images: true, output: AiStorySchema, perUserPerDay: 5 },
   },
 
   contentActions: {
@@ -284,35 +273,27 @@ export const plugin = defineGame<PoolDookContent, never>({
       },
     },
 
-    /** Whether the AI actions below can run here. */
-    aiStatus: {
-      method: "GET",
-      auth: "user",
-      handler: async () => ({ enabled: aiEnabled() }),
-    },
-
     generate: {
       auth: "account",
       input: GenerateSchema,
-      handler: async (_ctx, input: z.infer<typeof GenerateSchema>) =>
-        withAiErrors("The request was blocked by content filters. Try a different theme or title.", () =>
-          generatePoolDook(input.theme, input.extraWeird, input.title)
+      handler: async (ctx, input: z.infer<typeof GenerateSchema>) =>
+        toDraft(
+          await ctx.ai.run<AiStory>("generate", {
+            system: input.extraWeird ? EXTRA_WEIRD_SYSTEM_PROMPT : NORMAL_SYSTEM_PROMPT,
+            input: buildUserPrompt(input.theme, input.title),
+          })
         ),
     },
 
     enhance: {
       auth: "account",
       input: EnhanceSchema,
-      handler: async (_ctx, { text }: z.infer<typeof EnhanceSchema>) =>
-        withAiErrors("The text was blocked by content filters. Try rephrasing it.", async () =>
-          storyFromModelReply(
-            await anthropic.messages.create({
-              model: "claude-sonnet-4-6",
-              max_tokens: 2048,
-              messages: [{ role: "user", content: `Here is the text to turn into a Mad Libs-style story:\n\n${text}` }],
-              system: ENHANCE_PROMPT,
-            })
-          )
+      handler: async (ctx, { text }: z.infer<typeof EnhanceSchema>) =>
+        toDraft(
+          await ctx.ai.run<AiStory>("enhance", {
+            system: ENHANCE_PROMPT,
+            input: `Here is the text to turn into a Mad Libs-style story:\n\n${text}`,
+          })
         ),
     },
 
@@ -320,23 +301,15 @@ export const plugin = defineGame<PoolDookContent, never>({
     scan: {
       auth: "account",
       input: ScanSchema,
-      handler: async (_ctx, { mediaType, data }: z.infer<typeof ScanSchema>) =>
-        withAiErrors("The image was blocked by content filters. Try a different image.", async () =>
-          storyFromModelReply(
-            await anthropic.messages.create({
-              model: "claude-sonnet-4-6",
-              max_tokens: 4096,
-              messages: [
-                {
-                  role: "user",
-                  content: [
-                    { type: "image", source: { type: "base64", media_type: mediaType, data } },
-                    { type: "text", text: SCAN_PROMPT },
-                  ],
-                },
-              ],
-            })
-          )
+      handler: async (ctx, { mediaType, data }: z.infer<typeof ScanSchema>) =>
+        toDraft(
+          await ctx.ai.run<AiStory>("scan", {
+            system: SCAN_PROMPT,
+            input: [
+              { type: "image", mediaType, data },
+              { type: "text", text: "Here is the page." },
+            ],
+          })
         ),
     },
   },

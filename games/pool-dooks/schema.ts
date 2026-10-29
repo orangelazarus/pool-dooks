@@ -74,9 +74,9 @@ export const ImportSchema = z.object({
 });
 
 export const GenerateSchema = z.object({
-  theme: z.string().min(1),
+  theme: z.string().min(1).max(50),
   extraWeird: z.boolean().optional().default(false),
-  title: z.string().optional(),
+  title: z.string().max(200).optional(),
 });
 
 export const EnhanceSchema = z.object({ text: z.string().min(10).max(5000) });
@@ -87,4 +87,21 @@ export const ScanSchema = z.object({
     .string()
     .min(1)
     .max(Math.ceil((MAX_IMAGE_BYTES * 4) / 3) + 4, "That image is too large"),
+});
+
+/** What the model must hand back for generate, enhance and scan: a story with {{id}} blanks. */
+export const AiStorySchema = z.object({
+  title: z.string().max(200),
+  body_text: z.string().max(10_000),
+  tokens: z
+    .array(
+      z.object({
+        id: z.string().max(10),
+        label: z.string().max(40),
+        type: z.string().max(40),
+        position: z.number().int(),
+        occurrence: z.number().int(),
+      })
+    )
+    .max(40),
 });
