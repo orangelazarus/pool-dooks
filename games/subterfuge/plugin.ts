@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { VenetianMask } from "lucide-react";
 import { defineGame, GameError, type SessionContext } from "@/lib/game-sdk";
 import {
   CreateSchema,
@@ -78,6 +79,7 @@ function settle(ctx: Ctx, state: SubterfugeState): SubterfugeState {
 export const plugin = defineGame<SubterfugeContent, SubterfugeState>({
   gameType: "subterfuge",
   displayName: "Subterfuge",
+  icon: VenetianMask,
   description: "Write a lie convincing enough to fool your friends — then find the truth among theirs",
   minPlayers: 2,
   maxPlayers: 8,

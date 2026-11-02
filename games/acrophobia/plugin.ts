@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { CaseUpper } from "lucide-react";
 import { defineGame, GameError, type SessionContext } from "@/lib/game-sdk";
 import {
   AnswerSchema,
@@ -98,6 +99,7 @@ function settle(ctx: Ctx, state: AcroState): AcroState {
 export const plugin = defineGame<AcroContent, AcroState>({
   gameType: "acrophobia",
   displayName: "Acrophobia",
+  icon: CaseUpper,
   description: "Turn a random acronym into the funniest phrase you can — then vote for your favourite",
   // Face-off voting needs someone who isn't in it.
   minPlayers: 3,

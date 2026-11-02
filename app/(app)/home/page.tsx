@@ -4,7 +4,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { listOpenSessions, type OpenSession } from "@/lib/sessions/public";
-import { Eye, Users } from "lucide-react";
+import { Eye, Gamepad2, Users } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -62,26 +62,32 @@ export default async function HomePage() {
           <h1 className="text-3xl font-bold tracking-tight">Games</h1>
           <p className="text-muted-foreground mt-1">Pick a game to play with friends</p>
         </div>
-        <Link href="/sessions/new" className={cn(buttonVariants({ variant: "outline" }), "gap-2")}>
+        <Link href="/sessions/new" className={cn(buttonVariants({ variant: "secondary" }), "gap-2")}>
           Join by code
         </Link>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {plugins.map((plugin) => (
-          <Card key={plugin.gameType} className="hover:shadow-md transition-shadow">
-            <CardHeader>
-              <CardTitle>{plugin.displayName}</CardTitle>
-              <CardDescription>{plugin.description}</CardDescription>
-            </CardHeader>
-            {/* mt-auto: the button sits at the bottom however long the description runs */}
-            <CardContent className="mt-auto">
-              <Link href={plugin.browsePath} className={cn(buttonVariants(), "w-full")}>
-                Play
-              </Link>
-            </CardContent>
-          </Card>
-        ))}
+        {plugins.map((plugin) => {
+          const Icon = plugin.icon ?? Gamepad2;
+          return (
+            <Card key={plugin.gameType} className="hover:shadow-md transition-shadow">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Icon className="h-5 w-5 shrink-0" />
+                  {plugin.displayName}
+                </CardTitle>
+                <CardDescription>{plugin.description}</CardDescription>
+              </CardHeader>
+              {/* mt-auto: the button sits at the bottom however long the description runs */}
+              <CardContent className="mt-auto">
+                <Link href={plugin.browsePath} className={cn(buttonVariants(), "w-full")}>
+                  Play
+                </Link>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       <div className="mt-10">

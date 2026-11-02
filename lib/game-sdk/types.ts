@@ -264,6 +264,8 @@ export interface GameDefinition<C = unknown, S = unknown> {
   /** Stable id, used in URLs and storage. Lowercase letters, digits and underscores. */
   gameType: string;
   displayName: string;
+  /** Shown beside the name on the homepage. Default: a generic gamepad. */
+  icon?: React.ComponentType<{ className?: string }>;
   description: string;
   minPlayers: number;
   maxPlayers: number;

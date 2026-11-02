@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { Disc3 } from "lucide-react";
 import { defineGame, GameError, shuffle, type SessionContext } from "@/lib/game-sdk";
 import {
   BonusPickSchema,
@@ -95,6 +96,7 @@ async function load(ctx: Ctx) {
 export const plugin = defineGame<DiscusContent, DiscusState>({
   gameType: "discus_of_wealth",
   displayName: GAME,
+  icon: Disc3,
   description: "Spin the discus, call letters and solve the puzzle before your friends do",
   minPlayers: 2,
   maxPlayers: 6,

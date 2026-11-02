@@ -192,6 +192,7 @@ export function defineGame<C = unknown, S = unknown>(def: GameDefinition<C, S>):
   return {
     gameType: def.gameType,
     displayName: def.displayName,
+    icon: def.icon,
     description: def.description,
     browsePath: `/games/${def.gameType}`,
     minPlayers: def.minPlayers,

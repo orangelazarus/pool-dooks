@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { Dices } from "lucide-react";
 import { defineGame, GameError, type SessionContext } from "@/lib/game-sdk";
 import { CreateSchema, KeepSchema, type FarkleContent, type FarkleState, type FarkleStatePayload } from "./schema";
 import { scoreSelection, hasAnyScoringSubset, RULESETS } from "./scoring";
@@ -33,6 +34,7 @@ async function passTurn(ctx: Ctx, nextId: string) {
 export const plugin = defineGame<FarkleContent, FarkleState>({
   gameType: "farkle",
   displayName: "Farkle",
+  icon: Dices,
   description: "Roll six dice, bank your points before you bust — first to the target wins",
   minPlayers: 2,
   maxPlayers: 6,

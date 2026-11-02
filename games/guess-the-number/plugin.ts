@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { Hash } from "lucide-react";
 import { defineGame, GameError } from "@/lib/game-sdk";
 import { CreateSchema, type NumberGameContent } from "./schema";
 import { NumberGameBoard } from "./components/NumberGameBoard";
@@ -10,6 +11,7 @@ import BrowsePage from "./pages/BrowsePage";
 export const plugin = defineGame<NumberGameContent>({
   gameType: "guess_the_number",
   displayName: "Guess the Number",
+  icon: Hash,
   description: "Everyone guesses a secret number — closest wins",
   minPlayers: 2,
   maxPlayers: 16,
