@@ -78,6 +78,7 @@ export const VoteSchema = z.object({
 
 ```ts
 import type { z } from "zod";
+import { Flame } from "lucide-react";
 import { defineGame, GameError } from "@/lib/game-sdk";
 import { CreateSchema, VoteSchema, type HotTakeContent, type HotTakeState } from "./schema";
 import { HotTakeBoard } from "./components/HotTakeBoard";
@@ -87,6 +88,7 @@ import BrowsePage from "./pages/BrowsePage";
 export const plugin = defineGame<HotTakeContent, HotTakeState>({
   gameType: "hot_take",
   displayName: "Hot Take",
+  icon: Flame,
   description: "Vote agree or disagree on a spicy statement — see where everyone stands",
   minPlayers: 2,
   maxPlayers: 16,

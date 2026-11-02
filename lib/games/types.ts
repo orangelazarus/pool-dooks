@@ -18,6 +18,7 @@ export interface AnswerContext {
 export interface GamePlugin {
   gameType: string;
   displayName: string;
+  icon?: React.ComponentType<{ className?: string }>;
   description: string;
   browsePath: string;
   minPlayers: number;

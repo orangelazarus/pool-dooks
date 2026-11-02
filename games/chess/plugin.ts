@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { Crown } from "lucide-react";
 import { defineGame, GameError, type SessionContext } from "@/lib/game-sdk";
 import { CreateSchema, DrawSchema, MoveSchema, type ChessContent, type ChessState } from "./schema";
 import { remainingMs, timeControlLabel, type Side } from "./clock";
@@ -78,6 +79,7 @@ async function finishGame(
 export const plugin = defineGame<ChessContent, ChessState>({
   gameType: "chess",
   displayName: "Chess",
+  icon: Crown,
   description: "The classic two-player game — untimed or against the clock",
   minPlayers: 2,
   maxPlayers: 2,
