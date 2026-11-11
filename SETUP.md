@@ -24,6 +24,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
+`ANTHROPIC_API_KEY` is the whole key from the Anthropic console (`sk-ant-…`, about 100 characters; the console's dialog wraps it over two lines, so use its Copy button). Only core reads it: games reach AI through `ctx.ai`, which meters every call (see the README's AI section). Without it, AI features report themselves unavailable and are hidden. If both `.env` and `.env.local` set it, `.env.local` wins, so keep it in one place.
+
 ## 3. Generate VAPID Keys for Push Notifications
 
 ```bash
@@ -45,7 +47,7 @@ For a **new, empty** database:
 npm run db:push
 ```
 
-This creates all tables in your Supabase Postgres database. Games have no tables of their own: they store everything in the generic `game_content` and `game_state` tables.
+This creates all tables in your Supabase Postgres database. Games have no tables of their own: they store everything in the generic `game_content` and `game_state` tables. AI calls are logged in `ai_usage`, and `ai_blocks` holds the AI off switches.
 
 Never run `db:push` against a database that already has data — the migration snapshot is stale and it can propose destructive changes. Later schema changes are hand-written, numbered SQL files in `drizzle/`, applied through the Supabase SQL Editor **before** the code that needs them is deployed.
 
@@ -98,12 +100,13 @@ The icons live in `/public/icons/`:
 
 ```
 app/          Next.js App Router pages + API routes
-games/        One self-contained plugin per game (pool-dooks, guess-the-number, farkle, chess, subterfuge, acrophobia)
+games/        One self-contained plugin per game (pool-dooks, guess-the-number, farkle, chess, subterfuge, acrophobia, discus-of-wealth)
 components/   Shared React components (session, layout, ui)
 hooks/        Custom React hooks (useSession, useSessionChat, useGameState, usePushNotifications)
-lib/          Core logic (db schema, game SDK, game registry, session access, auth, push, realtime)
+lib/          Core logic (db schema, game SDK, AI service, game registry, sessions, auth, push, realtime)
 drizzle/      Numbered SQL migrations
-scripts/      sync-games.mjs (generates the game registry), check-pr-boundary.mjs (CI: games and core in separate PRs)
+scripts/      sync-games.mjs (generates the game registry), check-pr-boundary.mjs (CI: games and core in separate PRs),
+              ai-usage.mjs (AI cost report), e2e/ (browser checks against a running server)
 public/       Static assets (manifest.json, sw.js, icons)
 proxy.ts      Auth gate: what logged-out visitors can reach
 ```
