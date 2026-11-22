@@ -2,13 +2,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Square } from "chess.js";
-import { gameAction, GameActionError, useGameSession } from "@/lib/game-sdk/client";
+import { gameAction, GameActionError, useDeadline, useGameSession, type DeadlineInfo } from "@/lib/game-sdk/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
 import { formatClock, remainingMs, timeControlLabel, type Side } from "../clock";
-import { describeResult, otherSide, replay, sideToMove, type ChessStatePayload } from "../engine";
+import { COMPUTER_ID, describeResult, otherSide, replay, sideToMove, type ChessStatePayload } from "../engine";
 import { BoardGrid, MoveList, PieceGlyph } from "./BoardGrid";
 
 interface ChessBoardProps {
@@ -18,6 +18,9 @@ interface ChessBoardProps {
   title: string;
   timeControlSeconds: number | null;
   initialState: ChessStatePayload;
+  computerName: string;
+  /** Pending only while the computer is about to move. */
+  deadline: DeadlineInfo | null;
 }
 
 // The server's state plus how far this device's clock is from the server's,
@@ -29,6 +32,8 @@ interface Synced {
 
 const sync = (game: ChessStatePayload): Synced => ({ game, skew: game.serverNow - Date.now() });
 
+const playerIdOf = (game: ChessStatePayload, side: Side) => (side === "white" ? game.whitePlayerId : game.blackPlayerId);
+
 const PROMOTION_PIECES = ["q", "r", "b", "n"] as const;
 
 export function ChessBoard({
@@ -38,6 +43,8 @@ export function ChessBoard({
   title,
   timeControlSeconds,
   initialState,
+  computerName,
+  deadline,
 }: ChessBoardProps) {
   const router = useRouter();
   const [{ game, skew }, setSynced] = useState<Synced>(() => sync(initialState));
@@ -63,6 +70,10 @@ export function ChessBoard({
       if (name === "state") applyState(data as ChessStatePayload);
     },
   });
+
+  // The computer moves when its deadline comes due; an open board asks the
+  // server to settle it.
+  useDeadline("chess", shareCode, deadline);
 
   // Phones drop the realtime connection in the background, so catch up on
   // whatever was missed when the tab comes back.
@@ -98,7 +109,7 @@ export function ChessBoard({
   const timeLeft = (side: Side) => remainingMs(game, side, toMove, now + skew);
   const runningTimeLeft = clockRunning ? timeLeft(toMove) : null;
 
-  async function call(action: "move" | "resign" | "draw" | "flag", body?: unknown, quiet = false) {
+  async function call(action: "move" | "resign" | "draw" | "flag" | "computer", body?: unknown, quiet = false) {
     setBusy(true);
     try {
       const data = await gameAction<ChessStatePayload>("chess", shareCode, action, body);
@@ -122,6 +133,18 @@ export function ChessBoard({
     call("flag", undefined, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runningTimeLeft, mySide, game.moves.length]);
+
+  // The computer's turn: ask for its move now rather than wait for the
+  // server's backstop deadline. Once per position; the server ignores a
+  // request that comes after the move was played.
+  const askedComputerAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!mySide || game.result || playerIdOf(game, toMove) !== COMPUTER_ID) return;
+    if (askedComputerAtRef.current === game.moves.length) return;
+    askedComputerAtRef.current = game.moves.length;
+    call("computer", undefined, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game, toMove, mySide]);
 
   const legalMoves = useMemo(
     () => (selected ? chess.moves({ square: selected, verbose: true }) : []),
@@ -148,10 +171,10 @@ export function ChessBoard({
     setSelected(piece && piece.color === chess.turn() && square !== selected ? square : null);
   };
 
-  const names = {
-    white: players.find((p) => p.playerId === game.whitePlayerId)?.username ?? "White",
-    black: players.find((p) => p.playerId === game.blackPlayerId)?.username ?? "Black",
-  };
+  const nameOf = (id: string, fallback: string) =>
+    id === COMPUTER_ID ? computerName : (players.find((p) => p.playerId === id)?.username ?? fallback);
+  const names = { white: nameOf(game.whitePlayerId, "White"), black: nameOf(game.blackPlayerId, "Black") };
+  const computerToMove = playerIdOf(game, toMove) === COMPUTER_ID;
   const opponentOffered = !!game.drawOfferedBy && game.drawOfferedBy !== currentUserId;
   const iOffered = game.drawOfferedBy === currentUserId;
 
@@ -245,7 +268,9 @@ export function ChessBoard({
               : `${names[toMove]} is in check`
             : isMyTurn
               ? "Your move"
-              : `Waiting for ${names[toMove]}…`}
+              : computerToMove
+                ? `${names[toMove]} is thinking…`
+                : `Waiting for ${names[toMove]}…`}
       </p>
 
       {opponentOffered && !game.result && (
