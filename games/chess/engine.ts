@@ -5,6 +5,19 @@ import { Chess } from "chess.js";
 import type { Side } from "./clock";
 
 export type HostColor = Side | "random";
+
+// ── The computer opponent ───────────────────────────────────────────────────
+// Its seat in a game is this id in place of a player's. It is never a session
+// player: core doesn't know it exists, so it gets no pushes and no turn.
+export const COMPUTER_ID = "computer";
+export type Opponent = "friend" | "computer";
+export type Level = "easy" | "medium" | "hard";
+export const LEVELS: { id: Level; label: string }[] = [
+  { id: "easy", label: "Easy" },
+  { id: "medium", label: "Medium" },
+  { id: "hard", label: "Hard" },
+];
+export const computerName = (level: Level) => `Computer (${LEVELS.find((l) => l.id === level)?.label ?? level})`;
 export type GameResult = Side | "draw";
 export type ResultReason =
   | "checkmate"

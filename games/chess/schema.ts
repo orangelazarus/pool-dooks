@@ -2,7 +2,7 @@
 // Chess owns no database tables.
 import { z } from "zod";
 import { TIME_CONTROLS } from "./clock";
-import type { GameResult, HostColor, ResultReason } from "./engine";
+import type { GameResult, HostColor, Level, Opponent, ResultReason } from "./engine";
 
 const TIME_CONTROL_SECONDS = TIME_CONTROLS.map((t) => t.seconds);
 
@@ -11,6 +11,10 @@ export interface ChessContent {
   hostColor: HostColor;
   /** Seconds per side; null means untimed. */
   timeControlSeconds: number | null;
+  /** Missing on games created before the computer opponent: a friend. */
+  opponent?: Opponent;
+  /** How strong the computer plays; set when opponent is "computer". */
+  level?: Level;
 }
 
 /** Session state: the live game. */
@@ -36,6 +40,8 @@ export const CreateSchema = z.object({
     .int()
     .nullable()
     .refine((s) => TIME_CONTROL_SECONDS.includes(s), "Unsupported time control"),
+  opponent: z.enum(["friend", "computer"]).default("friend"),
+  level: z.enum(["easy", "medium", "hard"]).default("medium"),
 });
 
 const SQUARE = z.string().regex(/^[a-h][1-8]$/);

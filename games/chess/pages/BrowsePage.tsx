@@ -10,13 +10,15 @@ import { Crown, Gamepad2 } from "lucide-react";
 import { toast } from "sonner";
 import { contentAction } from "@/lib/game-sdk/client";
 import { TIME_CONTROLS, timeControlLabel } from "../clock";
-import type { HostColor } from "../engine";
+import { computerName, LEVELS, type HostColor, type Level, type Opponent } from "../engine";
 
 interface ChessGame {
   id: string;
   title: string;
   hostColor: HostColor;
   timeControlSeconds: number | null;
+  /** The computer's level; null for a game between two players. */
+  level: Level | null;
 }
 
 const HOST_COLORS: { id: HostColor; label: string }[] = [
@@ -25,6 +27,10 @@ const HOST_COLORS: { id: HostColor; label: string }[] = [
   { id: "random", label: "Random" },
 ];
 const UNTIMED = "untimed";
+const OPPONENTS: { id: Opponent; label: string }[] = [
+  { id: "friend", label: "A friend" },
+  { id: "computer", label: "The computer" },
+];
 
 const colorLabel = (hostColor: HostColor) =>
   hostColor === "random" ? "Random colors" : `Host plays ${hostColor}`;
@@ -35,6 +41,8 @@ export default function BrowsePage() {
   const [title, setTitle] = useState("");
   const [hostColor, setHostColor] = useState<HostColor>("white");
   const [timeControlSeconds, setTimeControlSeconds] = useState<number | null>(null);
+  const [opponent, setOpponent] = useState<Opponent>("friend");
+  const [level, setLevel] = useState<Level>("medium");
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
@@ -50,6 +58,8 @@ export default function BrowsePage() {
         title: title.trim() || undefined,
         hostColor,
         timeControlSeconds,
+        opponent,
+        level,
       });
       router.push(`/sessions/new?gameType=chess&gameContentId=${data.id}`);
     } catch {
@@ -64,14 +74,14 @@ export default function BrowsePage() {
         <Crown className="h-7 w-7" />
         <div>
           <h1 className="text-2xl font-bold">Chess</h1>
-          <p className="text-muted-foreground text-sm">The classic two-player game</p>
+          <p className="text-muted-foreground text-sm">Against a friend or the computer</p>
         </div>
       </div>
 
       <Card className="mb-8">
         <CardHeader>
           <CardTitle className="text-base">Create a New Game</CardTitle>
-          <CardDescription>Pick your color and whether to play against the clock.</CardDescription>
+          <CardDescription>Pick your opponent, your color and whether to play against the clock.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
@@ -82,6 +92,42 @@ export default function BrowsePage() {
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Sunday chess"
             />
+          </div>
+
+          <div className="flex gap-4">
+            <div className="flex-1 space-y-1.5">
+              <Label>Opponent</Label>
+              <Select value={opponent} onValueChange={(v) => v && setOpponent(v as Opponent)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {OPPONENTS.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {opponent === "computer" && (
+              <div className="flex-1 space-y-1.5">
+                <Label>Level</Label>
+                <Select value={level} onValueChange={(v) => v && setLevel(v as Level)}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LEVELS.map((l) => (
+                      <SelectItem key={l.id} value={l.id}>
+                        {l.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-4">
@@ -122,13 +168,21 @@ export default function BrowsePage() {
           </div>
 
           <ul className="text-xs text-muted-foreground space-y-1 list-disc pl-4">
-            <li>Two players. Tap a piece, then tap where it should go.</li>
+            <li>
+              {opponent === "computer"
+                ? "Just you against the computer. Tap a piece, then tap where it should go."
+                : "Two players. Tap a piece, then tap where it should go."}
+            </li>
             <li>
               {timeControlSeconds === null
                 ? "Untimed: move whenever you like — you'll get a notification when it's your turn."
                 : "Timed: clocks start after White's first move, and running out of time loses the game."}
             </li>
-            <li>Either player can resign or offer a draw at any time.</li>
+            <li>
+              {opponent === "computer"
+                ? "You can resign or offer a draw at any time; the computer takes a draw only when it suits it."
+                : "Either player can resign or offer a draw at any time."}
+            </li>
           </ul>
 
           <Button onClick={handleCreate} disabled={creating} className="w-full gap-2">
@@ -150,6 +204,7 @@ export default function BrowsePage() {
                   <div>
                     <p className="font-medium text-sm">{g.title}</p>
                     <p className="text-xs text-muted-foreground">
+                      {g.level ? `vs ${computerName(g.level)} · ` : ""}
                       {colorLabel(g.hostColor)} · {timeControlLabel(g.timeControlSeconds)}
                     </p>
                   </div>
