@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useRef } from "react";
 import type { Chess, Square } from "chess.js";
 import type { Side } from "../clock";
 
@@ -109,16 +110,63 @@ export function BoardGrid({
   );
 }
 
-/** "1. e4 e5 2. Nf3 …" as numbered pairs. */
-export function MoveList({ moves }: { moves: string[] }) {
+/**
+ * "1. e4 e5 2. Nf3 …" as numbered pairs. With `onSelect`, each move is a
+ * button that jumps to the position after it, and `current` (how many moves
+ * have been played on the board shown) highlights the latest one.
+ */
+export function MoveList({
+  moves,
+  current,
+  onSelect,
+}: {
+  moves: string[];
+  current?: number;
+  onSelect?: (ply: number) => void;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+
+  // Keep the highlighted move in view as the replay steps through the game.
+  useEffect(() => {
+    const el = box.current?.querySelector<HTMLElement>("[data-current]");
+    if (el && box.current) {
+      const { offsetTop, offsetHeight } = el;
+      const { scrollTop, clientHeight } = box.current;
+      if (offsetTop < scrollTop || offsetTop + offsetHeight > scrollTop + clientHeight) {
+        box.current.scrollTop = offsetTop - clientHeight / 2;
+      }
+    }
+  }, [current]);
+
   if (moves.length === 0) return null;
-  const pairs: string[][] = [];
-  for (let i = 0; i < moves.length; i += 2) pairs.push(moves.slice(i, i + 2));
+  const pairs: number[][] = [];
+  for (let i = 0; i < moves.length; i += 2) pairs.push(i + 1 < moves.length ? [i, i + 1] : [i]);
   return (
-    <div className="border rounded-lg p-3 max-h-32 overflow-y-auto text-sm font-mono leading-relaxed">
+    <div ref={box} className="relative border rounded-lg p-3 max-h-32 overflow-y-auto text-sm font-mono leading-relaxed">
       {pairs.map((pair, i) => (
         <span key={i} className="inline-block mr-3">
-          <span className="text-muted-foreground">{i + 1}.</span> {pair.join(" ")}
+          <span className="text-muted-foreground">{i + 1}.</span>{" "}
+          {pair.map((index) => {
+            const ply = index + 1;
+            const isCurrent = current === ply;
+            return onSelect ? (
+              <button
+                key={index}
+                type="button"
+                data-ply={ply}
+                data-current={isCurrent || undefined}
+                aria-current={isCurrent ? "step" : undefined}
+                onClick={() => onSelect(ply)}
+                className={`rounded px-0.5 mr-1 hover:bg-muted ${isCurrent ? "bg-primary text-primary-foreground hover:bg-primary" : ""}`}
+              >
+                {moves[index]}
+              </button>
+            ) : (
+              <span key={index} className="mr-1">
+                {moves[index]}
+              </span>
+            );
+          })}
         </span>
       ))}
     </div>
