@@ -1,6 +1,6 @@
 # Pool Dooks
 
-A multiplayer game platform. Play together in real time — fill in the blanks, roll dice, play chess, bluff at trivia, riff on acronyms, or build your own game.
+A multiplayer game platform. Play together in real time — fill in the blanks, roll dice, play chess, bluff at trivia, riff on acronyms, solve word puzzles, or build your own game.
 
 **Live at [pooldooks.com](https://pooldooks.com)** · source on [GitHub](https://github.com/orangelazarus/pool-dooks)
 
@@ -25,6 +25,9 @@ A trivia bluffing game. Everyone writes a lie convincing enough to pass for the 
 
 ### Acrophobia
 Turn a random acronym into the funniest phrase you can, then vote for your favourite. The first players to the target meet in a face-off judged by everyone else. 3–12 players.
+
+### Discus of Wealth
+Spin the discus, call consonants for cash, buy vowels for $250, and solve the word puzzle before your friends do. Watch out for Bankrupt and Lose a Turn. Whoever solves a round banks what they won in it (at least $1,000). The host picks 3, 4 or 5 puzzles, an optional time per turn, and whether the leader finishes with a bonus round: R, S, T, L, N and E are given, they pick three more consonants and a vowel, and have 15 seconds to solve for $25,000. 2–6 players.
 
 ---
 
@@ -222,6 +225,7 @@ games/                      One self-contained plugin per game, built on lib/gam
   chess/                    Rules helpers, clock
   subterfuge/               Question bank, scoring
   acrophobia/               Acronyms, categories, face-off
+  discus-of-wealth/         Discus, board layout, puzzle bank, bonus round
 
 components/
   session/                  Lobby, GuestJoin, PlayMenu, SessionChat, RematchPrompt, ShareCode, SessionNotice
