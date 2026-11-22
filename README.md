@@ -12,7 +12,7 @@ A multiplayer game platform. Play together in real time — fill in the blanks, 
 Turn a random acronym into the funniest phrase you can, then vote for your favourite. The first players to the target meet in a face-off judged by everyone else. 3–12 players.
 
 ### Chess
-Standard two-player chess with full rules, including castling, en passant, promotion, and automatic draws. The host picks White, Black or Random, and plays untimed or with 5, 10 or 30 minutes per side. Either player can resign or offer a draw.
+Standard chess with full rules, including castling, en passant, promotion, and automatic draws. Play a friend, or play alone against the computer (Stockfish) at Easy, Medium or Hard. The host picks White, Black or Random, and plays untimed or with 5, 10 or 30 minutes per side. Either player can resign or offer a draw; the computer accepts one only when it's losing or the position is level late in the game. 1–2 players.
 
 ### Discus of Wealth
 Spin the discus, call consonants for cash, buy vowels for $250, and solve the word puzzle before your friends do. Watch out for Bankrupt and Lose a Turn. Whoever solves a round banks what they won in it (at least $1,000). The host picks 3, 4 or 5 puzzles, an optional time per turn, and whether the leader finishes with a bonus round: R, S, T, L, N and E are given, they pick three more consonants and a vowel, and have 15 seconds to solve for $25,000. 2–6 players.
@@ -62,6 +62,7 @@ Private games are for their players only while in progress. AI story generation 
 | UI | shadcn/ui + Tailwind CSS |
 | Rich editor | Tiptap |
 | Chess rules | chess.js |
+| Chess computer opponent | Stockfish.js (WASM, run server-side) |
 | AI generation | Claude (Anthropic) |
 | Push notifications | Web Push (VAPID) |
 | Hosting | Hetzner VPS, PM2, Caddy |
@@ -220,7 +221,7 @@ app/
 
 games/                      One self-contained plugin per game, built on lib/game-sdk
   acrophobia/               Acronyms, categories, face-off
-  chess/                    Rules helpers, clock
+  chess/                    Rules helpers, clock, Stockfish computer opponent
   discus-of-wealth/         Discus, board layout, puzzle bank, bonus round
   farkle/                   Scoring engine (both rulesets)
   guess-the-number/
