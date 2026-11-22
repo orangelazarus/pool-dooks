@@ -8,26 +8,26 @@ A multiplayer game platform. Play together in real time — fill in the blanks, 
 
 ## Games
 
-### Pool Dooks
-Mad libs-style fill-in-the-blank stories. Players take turns filling in blanks without seeing the story — then everyone reads the ridiculous result together. Stories are AI-generated or created by hand with a rich editor. 1–16 players.
-
-### Guess the Number
-The host picks a secret number range. Everyone submits a guess. Closest to the secret number wins. 2–16 players.
-
-### Farkle
-Roll six dice, set aside the scoring ones, and decide whether to bank or push your luck — bust and the turn's points are gone. First to the target score wins. Two rulesets: **Original** (standard Farkle) and **KCD** (the tavern dice game from Kingdom Come: Deliverance, with its straights and doubling multiples). 2–6 players.
+### Acrophobia
+Turn a random acronym into the funniest phrase you can, then vote for your favourite. The first players to the target meet in a face-off judged by everyone else. 3–12 players.
 
 ### Chess
 Standard two-player chess with full rules, including castling, en passant, promotion, and automatic draws. The host picks White, Black or Random, and plays untimed or with 5, 10 or 30 minutes per side. Either player can resign or offer a draw.
 
-### Subterfuge
-A trivia bluffing game. Everyone writes a lie convincing enough to pass for the answer to an obscure question, then tries to pick the truth from among them. Points for finding it, and for every friend your lie fools. 2–8 players.
-
-### Acrophobia
-Turn a random acronym into the funniest phrase you can, then vote for your favourite. The first players to the target meet in a face-off judged by everyone else. 3–12 players.
-
 ### Discus of Wealth
 Spin the discus, call consonants for cash, buy vowels for $250, and solve the word puzzle before your friends do. Watch out for Bankrupt and Lose a Turn. Whoever solves a round banks what they won in it (at least $1,000). The host picks 3, 4 or 5 puzzles, an optional time per turn, and whether the leader finishes with a bonus round: R, S, T, L, N and E are given, they pick three more consonants and a vowel, and have 15 seconds to solve for $25,000. 2–6 players.
+
+### Farkle
+Roll six dice, set aside the scoring ones, and decide whether to bank or push your luck — bust and the turn's points are gone. First to the target score wins. Two rulesets: **Original** (standard Farkle) and **KCD** (the tavern dice game from Kingdom Come: Deliverance, with its straights and doubling multiples). 2–6 players.
+
+### Guess the Number
+The host picks a secret number range. Everyone submits a guess. Closest to the secret number wins. 2–16 players.
+
+### Pool Dooks
+Mad libs-style fill-in-the-blank stories. Players take turns filling in blanks without seeing the story — then everyone reads the ridiculous result together. Stories are AI-generated or created by hand with a rich editor. 1–16 players.
+
+### Subterfuge
+A trivia bluffing game. Everyone writes a lie convincing enough to pass for the answer to an obscure question, then tries to pick the truth from among them. Points for finding it, and for every friend your lie fools. 2–8 players.
 
 ---
 
@@ -219,13 +219,13 @@ app/
     push/                   Web push subscription
 
 games/                      One self-contained plugin per game, built on lib/game-sdk
-  pool-dooks/               Tiptap editor, AI prompts + generation
-  guess-the-number/
-  farkle/                   Scoring engine (both rulesets)
-  chess/                    Rules helpers, clock
-  subterfuge/               Question bank, scoring
   acrophobia/               Acronyms, categories, face-off
+  chess/                    Rules helpers, clock
   discus-of-wealth/         Discus, board layout, puzzle bank, bonus round
+  farkle/                   Scoring engine (both rulesets)
+  guess-the-number/
+  pool-dooks/               Tiptap editor, AI prompts + generation
+  subterfuge/               Question bank, scoring
 
 components/
   session/                  Lobby, GuestJoin, PlayMenu, SessionChat, RematchPrompt, ShareCode, SessionNotice

@@ -98,7 +98,7 @@ The icons live in `/public/icons/`:
 
 ```
 app/          Next.js App Router pages + API routes
-games/        One self-contained plugin per game (pool-dooks, guess-the-number, farkle, chess, subterfuge, acrophobia, discus-of-wealth)
+games/        One self-contained plugin per game (acrophobia, chess, discus-of-wealth, farkle, guess-the-number, pool-dooks, subterfuge)
 components/   Shared React components (session, layout, ui)
 hooks/        Custom React hooks (useSession, useSessionChat, useGameState, usePushNotifications)
 lib/          Core logic (db schema, game SDK, game registry, session access, auth, push, realtime)
