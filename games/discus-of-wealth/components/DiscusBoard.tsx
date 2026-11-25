@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Timer } from "lucide-react";
+import { Bot, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDeadline, useGameView, type DeadlineInfo } from "@/lib/game-sdk/client";
@@ -27,7 +27,9 @@ const money = (n: number) => `$${n.toLocaleString("en-US")}`;
 export function DiscusBoard({ shareCode, currentUserId, hostId, players, deadline, title, initialView }: DiscusBoardProps) {
   // Refreshes on the game's "changed" broadcast; actions reply with the new view.
   const { view, act, busy } = useGameView<DiscusView>("discus_of_wealth", shareCode, initialView);
-  const { seconds } = useDeadline("discus_of_wealth", shareCode, deadline);
+  const countdown = useDeadline("discus_of_wealth", shareCode, deadline);
+  // A computer player's move is on a deadline too, but it isn't a clock anyone races.
+  const seconds = countdown.deadline?.key.startsWith("npc:") ? null : countdown.seconds;
 
   // Hold back what a spin did until the discus stops turning.
   const [settledSpins, setSettledSpins] = useState(view.spins);
@@ -38,7 +40,8 @@ export function DiscusBoard({ shareCode, currentUserId, hostId, players, deadlin
   }, [view.spins, settledSpins]);
   const spinning = view.spins !== settledSpins;
 
-  const name = (id: string) => players.find((p) => p.playerId === id)?.username ?? "Someone";
+  const name = (id: string) => view.npcs[id] ?? players.find((p) => p.playerId === id)?.username ?? "Someone";
+  const npcTurn = Object.hasOwn(view.npcs, view.turnId);
   const isHost = currentUserId === hostId;
   const myTurn = view.turnId === currentUserId;
   const inBonus = view.bonus !== null;
@@ -80,13 +83,13 @@ export function DiscusBoard({ shareCode, currentUserId, hostId, players, deadlin
       <Scores view={view} name={name} currentUserId={currentUserId} />
 
       {!spinning && (
-        <Controls key={view.step} view={view} myTurn={myTurn} busy={busy} act={act} name={name} isPlayer={players.some((p) => p.playerId === currentUserId)} />
+        <Controls key={view.step} view={view} myTurn={myTurn} npcTurn={npcTurn} busy={busy} act={act} name={name} isPlayer={players.some((p) => p.playerId === currentUserId)} />
       )}
 
       <UsedLetters called={view.called} />
 
       {/* With a turn timer running, the timer moves things along instead. */}
-      {isHost && !myTurn && seconds === null && view.phase !== "solved" && view.phase !== "over" && (
+      {isHost && !myTurn && !npcTurn && seconds === null && view.phase !== "solved" && view.phase !== "over" && (
         <div className="text-center">
           <Button variant="ghost" size="sm" disabled={busy} onClick={() => act("skip", step)}>
             Skip {name(view.turnId)}
@@ -147,6 +150,7 @@ function Scores({ view, name, currentUserId }: { view: DiscusView; name: (id: st
           )}
         >
           <p className="text-sm font-medium truncate">
+            {Object.hasOwn(view.npcs, id) && <Bot className="inline h-3.5 w-3.5 mr-1 -mt-0.5 text-muted-foreground" aria-label="Computer player" />}
             {name(id)}
             {id === currentUserId && <span className="text-muted-foreground"> (you)</span>}
           </p>
@@ -179,6 +183,7 @@ function UsedLetters({ called }: { called: string[] }) {
 interface ControlsProps {
   view: DiscusView;
   myTurn: boolean;
+  npcTurn: boolean;
   isPlayer: boolean;
   busy: boolean;
   act: (action: string, input?: unknown) => Promise<boolean>;
@@ -186,7 +191,7 @@ interface ControlsProps {
 }
 
 /** What the viewer can do now. Keyed by step, so it resets after every move. */
-function Controls({ view, myTurn, isPlayer, busy, act, name }: ControlsProps) {
+function Controls({ view, myTurn, npcTurn, isPlayer, busy, act, name }: ControlsProps) {
   const [mode, setMode] = useState<"vowel" | "solve" | null>(null);
 
   // The game is over: everyone is on their way to the reveal.
@@ -203,7 +208,11 @@ function Controls({ view, myTurn, isPlayer, busy, act, name }: ControlsProps) {
   }
 
   if (!myTurn) {
-    return <p className="text-center text-sm text-muted-foreground">Waiting for {name(view.turnId)}…</p>;
+    return (
+      <p className="text-center text-sm text-muted-foreground">
+        {npcTurn ? `${name(view.turnId)} is thinking…` : `Waiting for ${name(view.turnId)}…`}
+      </p>
+    );
   }
 
   if (view.phase === "bonusPick") return <BonusPicker busy={busy} onPick={(picks) => act("bonusPick", picks)} />;

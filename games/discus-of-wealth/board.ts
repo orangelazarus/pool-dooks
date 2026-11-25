@@ -88,6 +88,13 @@ const LAYOUT: Array<number | "top" | "bankrupt" | "lose"> = [
 
 export const WEDGE_COUNT = LAYOUT.length;
 
+// The spin: a fast start that friction slows to a crawl, then, sometimes, a
+// rock back off a peg the flapper wouldn't let past.
+export const TURN_MS = 3500;
+export const ROCK_MS = 450;
+/** How long a spin takes to come to rest. The server waits this long before a computer player calls a letter. */
+export const SPIN_MS = TURN_MS + ROCK_MS;
+
 /** The discus for one round: values rise each round, and the last round's top wedge is $5,000. */
 export function wedgesFor(round: number, totalRounds: number): Wedge[] {
   const top = round === totalRounds - 1 ? 5000 : round === 0 ? 2500 : 3500;

@@ -10,14 +10,19 @@ import { Disc3, Gamepad2 } from "lucide-react";
 import { toast } from "sonner";
 import { contentAction } from "@/lib/game-sdk/client";
 import { BONUS_PRIZE, MIN_ROUND_WIN, VOWEL_COST } from "../board";
-import { ROUND_OPTIONS } from "../schema";
+import { NPC_LEVELS, NPC_TABLE_SIZE, ROUND_OPTIONS, type NpcLevel } from "../schema";
 
 interface DiscusGame {
   id: string;
   title: string;
   rounds: number;
   bonus: boolean;
+  computers: NpcLevel | null;
 }
+
+const LEVEL_LABELS: Record<NpcLevel, string> = { easy: "Easy", medium: "Medium", hard: "Hard" };
+// So the closed select shows the label, not the raw value.
+const COMPUTER_ITEMS: Record<NpcLevel | "off", string> = { off: "Off — people only", ...LEVEL_LABELS };
 
 const money = (n: number) => `$${n.toLocaleString("en-US")}`;
 
@@ -26,6 +31,7 @@ export default function BrowsePage() {
   const [games, setGames] = useState<DiscusGame[]>([]);
   const [rounds, setRounds] = useState<number>(3);
   const [bonus, setBonus] = useState(true);
+  const [computers, setComputers] = useState<NpcLevel | "off">("off");
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
@@ -39,7 +45,11 @@ export default function BrowsePage() {
   const handleCreate = async () => {
     setCreating(true);
     try {
-      const data = await contentAction<{ id: string }>("discus_of_wealth", "create", { rounds, bonus });
+      const data = await contentAction<{ id: string }>("discus_of_wealth", "create", {
+        rounds,
+        bonus,
+        ...(computers !== "off" && { computers }),
+      });
       play(data.id);
     } catch {
       toast.error("Failed to create game");
@@ -82,6 +92,26 @@ export default function BrowsePage() {
             </Select>
           </div>
 
+          <div className="space-y-1.5">
+            <Label>Computer players</Label>
+            <Select value={computers} items={COMPUTER_ITEMS} onValueChange={(v) => v && setComputers(v as NpcLevel | "off")}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(["off", ...NPC_LEVELS] as const).map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {COMPUTER_ITEMS[value]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Fills empty seats up to {NPC_TABLE_SIZE} players: play solo against two computers, or with a friend against
+              one.
+            </p>
+          </div>
+
           <div className="flex items-center justify-between gap-4">
             <div>
               <Label htmlFor="bonus" className="cursor-pointer">
@@ -120,6 +150,7 @@ export default function BrowsePage() {
                     <p className="font-medium text-sm">{g.title}</p>
                     <p className="text-xs text-muted-foreground">
                       {g.rounds} puzzles{g.bonus ? " + bonus round" : ""}
+                      {g.computers ? ` · computers (${LEVEL_LABELS[g.computers]})` : ""}
                     </p>
                   </div>
                   <Button size="sm" variant="outline" onClick={() => play(g.id)}>

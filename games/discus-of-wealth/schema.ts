@@ -5,11 +5,19 @@ import { BONUS_CONSONANTS, type Wedge } from "./board";
 
 export const ROUND_OPTIONS = [3, 4, 5] as const;
 
+/** How well computer players play. */
+export const NPC_LEVELS = ["easy", "medium", "hard"] as const;
+export type NpcLevel = (typeof NPC_LEVELS)[number];
+/** Computer players fill the empty seats up to this many players. */
+export const NPC_TABLE_SIZE = 3;
+
 /** Content row: the settings the host picked at creation time. */
 export interface DiscusContent {
   rounds: number;
   /** End with a bonus round for the leader. */
   bonus: boolean;
+  /** Fill empty seats with computer players of this level. Missing: humans only. */
+  computers?: NpcLevel;
 }
 
 // turn — spin, buy a vowel or solve · call — spun a value, now call a consonant
@@ -69,6 +77,8 @@ export interface DiscusState {
   last: Happening | null;
   history: RoundRecord[];
   bonus: BonusRecord | null;
+  /** Computer players: id -> name. Their ids are in `order` like anyone's. Missing on games from before them. */
+  npcs?: Record<string, string>;
 }
 
 /** What one browser is shown. Never names a puzzle before it is solved or the game is over. */
@@ -93,6 +103,8 @@ export interface DiscusView {
   canBuy: boolean;
   /** The bonus round, once it has begun. */
   bonus: (BonusRecord & { prize: number }) | null;
+  /** Computer players: id -> name. */
+  npcs: Record<string, string>;
 }
 
 /** The realtime nudge: enough to know something changed, nothing worth peeking at. */
@@ -105,6 +117,7 @@ export interface ChangedPayload {
 export const CreateSchema = z.object({
   rounds: z.union([z.literal(3), z.literal(4), z.literal(5)]),
   bonus: z.boolean().default(true),
+  computers: z.enum(NPC_LEVELS).optional(),
 });
 
 const letter = z.string().regex(/^[A-Z]$/);
