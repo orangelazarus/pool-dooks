@@ -1,13 +1,8 @@
 "use client";
 import { useLayoutEffect, useRef } from "react";
-import type { Wedge } from "../board";
+import { ROCK_MS, SPIN_MS, TURN_MS, type Wedge } from "../board";
 
-// The spin: a fast start that friction slows to a crawl, then, sometimes, a
-// rock back off a peg the flapper wouldn't let past.
-const TURN_MS = 3500;
-const ROCK_MS = 450;
-/** How long a spin takes to come to rest. */
-export const SPIN_MS = TURN_MS + ROCK_MS;
+export { SPIN_MS };
 const MIN_TURNS = 2;
 /** Higher: a longer crawl at the end. */
 const FRICTION = 3;

@@ -27,7 +27,7 @@ export function getPuzzle(id: string): Puzzle {
 // Bonus puzzles are short, as on the show.
 const BONUS_MAX_WORDS = 3;
 const BONUS_MAX_LETTERS = 16;
-const lettersOf = (text: string) => text.toUpperCase().replace(/[^A-Z]/g, "");
+export const lettersOf = (text: string) => text.toUpperCase().replace(/[^A-Z]/g, "");
 
 /**
  * Picks the game's puzzles: `rounds` for the main game, no category twice in a
@@ -72,7 +72,8 @@ export function currentPuzzle(state: DiscusState): Puzzle {
   return getPuzzle(state.bonus ? state.bonusPuzzleId! : state.puzzleIds[state.round]);
 }
 
-const remaining = (state: DiscusState, letters: string[]) => {
+/** Letters from `letters` that are in the puzzle and not yet called. */
+export const remaining = (state: DiscusState, letters: string[]) => {
   const inPuzzle = new Set(lettersOf(currentPuzzle(state).puzzle));
   return letters.filter((l) => inPuzzle.has(l) && !state.called.includes(l));
 };
@@ -270,5 +271,6 @@ export function viewFor(state: DiscusState, viewerId: string | null): DiscusView
     canSpin: myTurn && remaining(state, CONSONANTS).length > 0,
     canBuy: myTurn && remaining(state, VOWELS).length > 0 && (state.roundMoney[me] ?? 0) >= VOWEL_COST,
     bonus: state.bonus && { ...state.bonus, prize: BONUS_PRIZE },
+    npcs: state.npcs ?? {},
   };
 }
