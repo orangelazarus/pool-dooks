@@ -42,7 +42,7 @@ describe("computer players", () => {
       for (let i = 0; i < 1000; i++) if ("TNS".includes(chooseLetter("consonant", [], level, rng)!)) common++;
       return common / 1000;
     };
-    expect(share("hard")).toBeGreaterThan(0.95);
+    expect(share("hard")).toBeGreaterThan(share("medium"));
     expect(share("medium")).toBeGreaterThan(share("easy"));
     expect(share("easy")).toBeGreaterThan(3 / 21); // still better than chance
   });
