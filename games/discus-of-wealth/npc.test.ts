@@ -3,6 +3,7 @@ import { GameError } from "@/lib/game-sdk";
 import { BONUS_GIVEN, CONSONANTS, VOWELS, WEDGE_COUNT } from "./board";
 import { chooseLetter, isNpc, makeNpcs, npcDelay, npcTurn, seeded, shownShare } from "./npc";
 import { freshState, pickPuzzles, startBonus } from "./rules";
+import { NPC_TUNING } from "./npc-tuning";
 import { PUZZLES } from "./puzzles";
 import { NPC_LEVELS, type DiscusState } from "./schema";
 
@@ -42,9 +43,17 @@ describe("computer players", () => {
       for (let i = 0; i < 1000; i++) if ("TNS".includes(chooseLetter("consonant", [], level, rng)!)) common++;
       return common / 1000;
     };
+    expect(share("hard")).toBeGreaterThan(0.75); // about 0.87 with today's tuning
     expect(share("hard")).toBeGreaterThan(share("medium"));
     expect(share("medium")).toBeGreaterThan(share("easy"));
     expect(share("easy")).toBeGreaterThan(3 / 21); // still better than chance
+  });
+
+  it("keeps every level's solving threshold reachable", () => {
+    for (const level of NPC_LEVELS) {
+      const { solveAt, solveJitter } = NPC_TUNING[level];
+      expect(solveAt + solveJitter, level).toBeLessThanOrEqual(1);
+    }
   });
 
   it("buys a vowel that's there once only vowels are hidden", () => {

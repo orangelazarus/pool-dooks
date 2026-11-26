@@ -14,7 +14,7 @@ import {
   spin,
 } from "./rules";
 import type { DiscusState, NpcLevel } from "./schema";
-import { NPC_TUNING } from "./npc-tuning";
+import { BONUS_START_SHARE, NPC_TUNING } from "./npc-tuning";
 
 /** Names for computer players, picked at random. */
 const NAMES = ["Dusty", "Penny", "Lucky", "Goldie", "Sparky", "Bingo", "Nickel", "Ruby", "Jackpot", "Dot"];
@@ -88,8 +88,8 @@ export function shownShare(state: DiscusState): number {
 
 /** Whether the computer playing the bonus round will solve it. Decided once its letters are up. */
 export function bonusWins(state: DiscusState, level: NpcLevel, rng: Rng): boolean {
-  const { bonusSkill, bonusMaxChance } = NPC_TUNING[level];
-  const chance = Math.min(bonusMaxChance, Math.max(0.02, (shownShare(state) - 0.2) * 1.1 * bonusSkill));
+  const { bonusSkill, bonusMinChance, bonusMaxChance } = NPC_TUNING[level];
+  const chance = Math.min(bonusMaxChance, Math.max(bonusMinChance, (shownShare(state) - BONUS_START_SHARE) * bonusSkill));
   return rng() < chance;
 }
 
