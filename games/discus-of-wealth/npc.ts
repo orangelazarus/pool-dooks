@@ -14,6 +14,7 @@ import {
   spin,
 } from "./rules";
 import type { DiscusState, NpcLevel } from "./schema";
+import { BONUS_START_SHARE, NPC_TUNING } from "./npc-tuning";
 
 /** Names for computer players, picked at random. */
 const NAMES = ["Dusty", "Penny", "Lucky", "Goldie", "Sparky", "Bingo", "Nickel", "Ruby", "Jackpot", "Dot"];
@@ -21,23 +22,6 @@ const NAMES = ["Dusty", "Penny", "Lucky", "Goldie", "Sparky", "Bingo", "Nickel",
 // English letters, most common first.
 const CONSONANT_ORDER = "TNSRHLDCMFPGWYBVKXJQZ".split("");
 const VOWEL_ORDER = "EAOIU".split("");
-
-interface Tuning {
-  /** How much chance there is in letter choice: 0 always takes the commonest letter left; 1 or more is close to random. */
-  noise: number;
-  /** Solves once this share of the puzzle's letters is showing. */
-  solveAt: number;
-  /** The chance of buying a vowel when it could spin instead. */
-  vowelChance: number;
-  /** Scales the chance of solving the bonus puzzle. */
-  bonusSkill: number;
-}
-
-const TUNING: Record<NpcLevel, Tuning> = {
-  easy: { noise: 1.5, solveAt: 0.85, vowelChance: 0.15, bonusSkill: 0.6 },
-  medium: { noise: 0.6, solveAt: 0.7, vowelChance: 0.3, bonusSkill: 1 },
-  hard: { noise: 0.15, solveAt: 0.55, vowelChance: 0.45, bonusSkill: 1.4 },
-};
 
 export type Rng = () => number;
 
@@ -64,7 +48,8 @@ export function makeNpcs(count: number, rng: Rng = Math.random): Record<string, 
 export const isNpc = (state: DiscusState, id: string) => Object.hasOwn(state.npcs ?? {}, id);
 
 /**
- * Picks a letter: the more common it is, the likelier, with `noise` for luck.
+ * Picks a letter: the more common it is, the likelier, with `noise` for luck,
+ * and now and then (`blunderChance`) any letter at all.
  * Letters in `boost` win outright. From the original PHP chooseCpuLetter; the
  * port checks the boost against the letter itself (the PHP checked the letter
  * at the same index of the full list, which no longer lined up once called
@@ -79,10 +64,13 @@ export function chooseLetter(
 ): string | null {
   const left = (kind === "consonant" ? CONSONANT_ORDER : VOWEL_ORDER).filter((l) => !exclude.includes(l));
   const n = left.length;
+  const { noise, blunderChance } = NPC_TUNING[level];
+  const blunder = rng() < blunderChance;
   let best: string | null = null;
   let bestWeight = -Infinity;
   left.forEach((letter, i) => {
-    const weight = n - i + TUNING[level].noise * n * rng() + (boost.includes(letter) ? 1000 * n : 0);
+    const odds = blunder ? n * rng() : n - i + noise * n * rng();
+    const weight = odds + (boost.includes(letter) ? 1000 * n : 0);
     if (weight > bestWeight) {
       best = letter;
       bestWeight = weight;
@@ -100,7 +88,8 @@ export function shownShare(state: DiscusState): number {
 
 /** Whether the computer playing the bonus round will solve it. Decided once its letters are up. */
 export function bonusWins(state: DiscusState, level: NpcLevel, rng: Rng): boolean {
-  const chance = Math.min(0.95, Math.max(0.05, (shownShare(state) - 0.2) * 1.1 * TUNING[level].bonusSkill));
+  const { bonusSkill, bonusMinChance, bonusMaxChance } = NPC_TUNING[level];
+  const chance = Math.min(bonusMaxChance, Math.max(bonusMinChance, (shownShare(state) - BONUS_START_SHARE) * bonusSkill));
   return rng() < chance;
 }
 
@@ -134,7 +123,7 @@ export function npcDelay(state: DiscusState, level: NpcLevel, rng: Rng): number 
  */
 export function npcTurn(state: DiscusState, level: NpcLevel, rng: Rng, wedge: number): DiscusState {
   const id = state.turnId;
-  const tuning = TUNING[level];
+  const tuning = NPC_TUNING[level];
   const answer = currentPuzzle(state).puzzle;
 
   switch (state.phase) {
@@ -146,10 +135,13 @@ export function npcTurn(state: DiscusState, level: NpcLevel, rng: Rng, wedge: nu
     case "turn": {
       const consonantsLeft = remaining(state, CONSONANTS).length > 0;
       const vowelsLeft = remaining(state, VOWELS);
-      const canBuy = (state.roundMoney[id] ?? 0) >= VOWEL_COST && vowelsLeft.length > 0;
+      const money = state.roundMoney[id] ?? 0;
+      const canBuy = money >= VOWEL_COST && vowelsLeft.length > 0;
       const stuck = !consonantsLeft && !canBuy;
-      if (stuck || shownShare(state) >= tuning.solveAt + (rng() - 0.5) * 0.16) return solve(state, id, answer);
-      if (canBuy && (!consonantsLeft || rng() < tuning.vowelChance)) {
+      const solveAt = tuning.solveAt + (rng() * 2 - 1) * tuning.solveJitter;
+      if (stuck || shownShare(state) >= solveAt) return solve(state, id, answer);
+      const wantsVowel = money - VOWEL_COST >= tuning.vowelReserve && rng() < tuning.vowelChance;
+      if (canBuy && (!consonantsLeft || wantsVowel)) {
         // Once only vowels are hidden, it buys one that's there: the PHP's onlyVowelsRemain.
         const letter = chooseLetter("vowel", state.called, level, rng, consonantsLeft ? [] : vowelsLeft)!;
         return buyVowel(state, id, letter);
