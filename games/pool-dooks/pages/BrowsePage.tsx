@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { FilePenLine } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -29,9 +30,12 @@ export default function BrowsePage() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Pool Dooks</h1>
-          <p className="text-muted-foreground mt-1">Fill in the blanks, laugh together</p>
+        <div className="flex items-center gap-3">
+          <FilePenLine className="h-8 w-8 shrink-0" />
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Pool Dooks</h1>
+            <p className="text-muted-foreground mt-1">Fill in the blanks, laugh together</p>
+          </div>
         </div>
         <div className="flex gap-2 flex-wrap">
           <Link href="/sessions/new" className={cn(buttonVariants({ variant: "outline" }), "gap-2")}>
