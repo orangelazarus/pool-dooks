@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { FilePenLine } from "lucide-react";
 import { defineGame, GameError, type ContentRecord, type SessionContext } from "@/lib/game-sdk";
 import {
   AiStorySchema,
@@ -99,6 +100,7 @@ const tokensOf = (ctx: Ctx) => ctx.session.content.data.tokens ?? [];
 export const plugin = defineGame<PoolDookContent, never>({
   gameType: "pool_dooks",
   displayName: "Pool Dooks",
+  icon: FilePenLine,
   description: "Fill in the blanks together, then read the hilarious result",
   minPlayers: 1,
   maxPlayers: 16,
